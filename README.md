@@ -118,6 +118,7 @@ GC_AUTO_TA/
 | [docs/06-canvas-writeback.md](docs/06-canvas-writeback.md) | 分数换算、迟交扣分、评语模板、批量与匿名 |
 | [docs/07-operations.md](docs/07-operations.md) | 运维手册：命令详解、续跑、排错表、限流 |
 | [docs/08-security-and-compliance.md](docs/08-security-and-compliance.md) | 密钥、数据边界、留痕与合规 |
+| [docs/09-multiple-test-cases.md](docs/09-multiple-test-cases.md) | **多个 test case**：executor/parser 两层 cases、分数分配、compareSpace 语义、多 stage 编译+运行 |
 
 ## 版本与来源
 

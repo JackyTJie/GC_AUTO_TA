@@ -76,7 +76,7 @@ raw    :  canvas_score = joj3_score          （要求两边满分一致）
 | 任务一直 `waiting`，tasks 里啥都没有 | 该组织没有 runner | 让管理员给该组织注册 runner（提供：组织名、标签 `golang-ubuntu-latest`、并发数） |
 | 任务 `failure`，`joj3_result.json` 里 `Internal Error` + `Time: 0 ms` | `conf.json` 缺必填字段（`procLimit` / `cpuLimit` / `clockLimit` / `memoryLimit` / `stdin`） | 补齐（JOJ3 指南第 3 章字段表） |
 | 沙箱里找不到文件 | `conf.json` 里写的是容器路径而不是沙箱路径 | 用 `copyInDir: "."` + 仓库相对路径（如 `joj/run_tests.m`） |
-| 分数 0 但代码看着对 | 输出与期望差一个空行/空格/编码 | 让测试脚本输出格式稳定（如 `printf` 固定格式），或在 assignment 文本里写死格式 |
+| 分数 0 但代码看着对 | 输出内容真的不同；或比较的文件名不在 `copyOut` 里（此时取到空串） | 先本地跑一遍测试脚本对比；多组数据/严格比较（含空白）的写法见 `docs/09-multiple-test-cases.md` |
 | `could not read Username` / `401` | 私有组织或私有仓库下匿名 clone | 换 `publish: file`（用 secret 模板）或改为公开组织+公开仓库 |
 | `remote: Unauthorized`（private 用公网地址 clone） | 用了 `http://<域名>`，https 跳转丢了凭据 | 容器内用 `gitea.internal_url`（本机即 `http://localhost:3000`） |
 | `curl: command not found` | job 镜像没有 curl | 用 `python3` + `urllib.request`（模板已如此） |

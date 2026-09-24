@@ -82,7 +82,7 @@ grading:
                 "name": "diff",
                 "with": {
                   "passComment": "输出与期望完全一致",
-                  "failComment": "输出与期望不一致（注意多余空行/空格也会判错）",
+                  "failComment": "输出与期望不一致",
                   "cases": [
                     {
                       "outputs": [
@@ -120,6 +120,14 @@ grading:
       a=1 b=0 cin=1 sum=0 cout=1
       a=1 b=1 cin=0 sum=0 cout=1
       a=1 b=1 cin=1 sum=1 cout=1
+
+  # ---- 多组测试数据（多个 test case）----
+  # 上面只用 1 组数据。要多组时：executor.with.cases 与 parsers[].with.cases 成对增加（个数必须相等），
+  # 每组输入/期望作为独立文件放进 files（如 joj/cases/a.in、joj/cases/a.out），
+  # 分数按组分配、各组之和必须等于 max_score（diff 的分数是累加的，不是百分比）。
+  # 完整说明 + 可抄示例见 docs/09-multiple-test-cases.md。
+  # 注意：diff 的 compareSpace 默认 false = **忽略空白差异**（空行/行内空格都不算错）；
+  #       要「多一个空行就判错」必须显式写 "compareSpace": true。
 
   # ---- 另一种写法：评分文件放在目录里（上面 files 为空时才生效）----
   # files_dir: ./course-conf/hw1      # 目录内容原样搬进仓库（保持相对路径）

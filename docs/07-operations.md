@@ -72,7 +72,7 @@ python3 -m gc_auto_ta run -c config.yaml [--live] [--dry-run] [--limit N] [--onl
 | Actions 一直 waiting、任务列表为空 | 该组织没有 runner | 让运维为该组织注册 runner；Gitea 1.23 不支持实例级 runner（必须一个组织一个 runner） |
 | `Executor Status: Internal Error` | `conf.json` 缺 `procLimit/cpuLimit/clockLimit/memoryLimit/stdin` | 补齐字段（JOJ3 指南第 3 章） |
 | 沙箱找不到 `joj/run_tests.m` | `conf.json` 用了容器路径 | `copyInDir: "."` + 仓库相对路径 |
-| 全班 0 分 | `expected.txt` 与 `run_tests.m` 输出格式不一致（空行/空格/编码） | 本地先跑一遍 `octave-cli joj/run_tests.m` 对比 |
+| 全班 0 分 | 期望文件与学生输出真的不同；或 `copyOut` 未包含被比较的文件名；或 `max_score` 与 conf.json 分数之和不一致 | 本地先跑一遍 `octave-cli joj/run_tests.m` 对比；多组数据见 `docs/09-multiple-test-cases.md` |
 | 收分时 `看不到 score-*.json` | workflow 没 push 回分数（缺 secret / 模板不匹配） | 用 `publish: file` 的 secret 模板；确认 `score_file_pattern` 与模板一致 |
 | `writeback` 显示 0 人 | `state.scores` 为空 | 先 `grade`；或 `reset --stage grade` 后重收 |
 | 压缩包解不开 | 缺 `bsdtar`/`7z`/`unrar` | `sudo apt install libarchive-tools p7zip-full unrar` |
