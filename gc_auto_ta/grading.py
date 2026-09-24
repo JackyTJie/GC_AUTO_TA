@@ -1,0 +1,215 @@
+"""触发评测、等待、收集 joj3 结果。
+
+触发：push 即触发（Gitea Actions）。重跑用空提交。
+等待：轮询 GET /repos/{owner}/{repo}/actions/tasks（Gitea 1.23 只有这个接口，
+     没有 runs / workflow dispatch / logs 接口）。
+收集：三选一，按 config.yaml 的 grading.publish 决定：
+     file   → workflow 把 score-<sha7>.json push 回仓库，这里用 contents API 读；
+     issue  → workflow 开一个 issue，这里读 issue body 里的 JSON；
+     none   → 本地克隆仓库读 joj3_result.json（要求 workflow 也把它提交回去）
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Any
+
+from .util import log, retry
+
+
+# --------------------------------------------------------------------------- 结果解析
+def parse_joj3_result(data: Any) -> dict:
+    """解析 joj3_result.json。
+
+    结构（JOJ3 指南第 1 章）：
+        [ {"name": "run", "results": [{"score": 100, "comment": "Passed!"}], "force_quit": false}, ... ]
+    总分 = 各 stage 各 result 的 score 之和；评语按顺序拼接（去重空串）。
+    """
+    stages: list[dict] = []
+    total = 0.0
+    comments: list[str] = []
+    if isinstance(data, dict):
+        data = [data]
+    for stage in data or []:
+        if not isinstance(stage, dict):
+            continue
+        name = stage.get("name", "")
+        stage_score = 0.0
+        stage_comments: list[str] = []
+        for res in stage.get("results", []) or []:
+            try:
+                sc = float(res.get("score") or 0)
+            except (TypeError, ValueError):
+                sc = 0.0
+            stage_score += sc
+            txt = str(res.get("comment") or "").strip()
+            if txt:
+                stage_comments.append(txt)
+        total += stage_score
+        comments.extend(stage_comments)
+        stages.append({
+            "name": name,
+            "score": stage_score,
+            "comment": " / ".join(stage_comments),
+            "force_quit": bool(stage.get("force_quit")),
+        })
+    return {
+        "score": total,
+        "comment": "；".join(dict.fromkeys(comments)),
+        "stages": stages,
+    }
+
+
+# --------------------------------------------------------------------------- 等待任务
+def wait_run(cfg, gitea, repo: str, sha: str | None = None) -> dict | None:
+    log().info("等待 %s/%s 的 Action 任务（最长 %.0f 秒）…", cfg.org, repo, cfg.grading_timeout)
+    task = gitea.wait_task(cfg.org, repo, head_sha=sha,
+                           poll_interval=cfg.poll_interval, timeout=cfg.grading_timeout)
+    if task:
+        log().info("任务状态：%s（run #%s）", task.get("status"), task.get("run_number"))
+    else:
+        log().warning("等待超时，未拿到任务状态：%s/%s", cfg.org, repo)
+    return task
+
+
+# --------------------------------------------------------------------------- 收集
+def collect_score(cfg, gitea, repo: str, sha: str, student_key: str = "") -> dict:
+    """按 publish 策略读取本次评测结果。返回 {"score":float|None, "comment":str, "stages":[], "source":str}"""
+    publish = cfg.publish
+    empty = {"score": None, "comment": "", "stages": [], "source": ""}
+
+    if publish == "file":
+        name = cfg.score_file_name(sha, student_key)
+        text = gitea.get_file(cfg.org, repo, name, ref=cfg.default_branch)
+        if text:
+            parsed = parse_joj3_result(_loads(text))
+            parsed["source"] = f"file:{name}"
+            return parsed
+        log().warning("%s 里没有 %s（workflow 可能没 push 回分数）", repo, name)
+        return empty
+
+    if publish == "issue":
+        for issue in gitea.list_issues(cfg.org, repo):
+            title = str(issue.get("title") or "")
+            if not title.lower().startswith("grading result"):
+                continue
+            body = str(issue.get("body") or "")
+            if sha and sha[:7] not in body and sha not in body:
+                continue
+            payload = _extract_json_block(body)
+            if payload is not None:
+                parsed = parse_joj3_result(payload)
+                parsed["source"] = f"issue:#{issue.get('number')}"
+                return parsed
+        log().warning("%s 里没有找到包含本次 sha 的评分 issue", repo)
+        return empty
+
+    # publish=none：本地 clone 读 joj3_result.json
+    text = gitea.get_file(cfg.org, repo, "joj3_result.json", ref=cfg.default_branch)
+    if text:
+        parsed = parse_joj3_result(_loads(text))
+        parsed["source"] = "file:joj3_result.json"
+        return parsed
+    log().warning("%s 仓库里没有 joj3_result.json（publish=none 时 workflow 需自行提交结果）", repo)
+    return empty
+
+
+def _loads(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except ValueError:
+        log().warning("结果文件不是合法 JSON，尝试提取代码块")
+        return _extract_json_block(text) or []
+
+
+def _extract_json_block(text: str) -> Any | None:
+    """从 ```json ... ``` 代码块或裸 JSON 里抠出对象/数组。"""
+    m = re.search(r"```(?:json)?\s*(.+?)```", text or "", re.S)
+    candidate = m.group(1) if m else (text or "")
+    candidate = candidate.strip()
+    if not candidate:
+        return None
+    try:
+        return json.loads(candidate)
+    except ValueError:
+        pass
+    for opener, closer in (("[", "]"), ("{", "}")):
+        i, j = candidate.find(opener), candidate.rfind(closer)
+        if 0 <= i < j:
+            try:
+                return json.loads(candidate[i:j + 1])
+            except ValueError:
+                continue
+    return None
+
+
+# --------------------------------------------------------------------------- 批量
+def grade_all(cfg, gitea, state, keys: list[str] | None = None,
+              wait: bool = True, dry_run: bool = False) -> dict[str, dict]:
+    """对已推送的学生逐个等任务 + 收分数，写入 state。"""
+    out: dict[str, dict] = {}
+    rows = state.students(cfg.assignment_name)
+    for row in rows:
+        key = row["student_key"]
+        if keys and key not in keys:
+            continue
+        repo = row.get("repo")
+        if not repo:
+            continue
+        run = state.last_run(cfg.assignment_name, key) or {}
+        sha = run.get("commit_sha") or ""
+        info = {"repo": repo, "sha": sha, "task_status": "", "score": None, "error": ""}
+        try:
+            if dry_run:
+                info["task_status"] = "dry-run"
+            else:
+                task = wait_run(cfg, gitea, repo, sha) if wait else None
+                if task and run.get("id"):
+                    info["task_status"] = str(task.get("status") or "")
+                    state.update_run(int(run["id"]), task_id=task.get("id"),
+                                     task_status=info["task_status"],
+                                     run_number=task.get("run_number"))
+                collected = collect_score(cfg, gitea, repo, sha, key)
+                info.update({k: collected[k] for k in ("score", "comment", "source")})
+                state.save_score(cfg.assignment_name, key,
+                                 score=collected.get("score"),
+                                 comment=collected.get("comment", ""),
+                                 stages=json.dumps(collected.get("stages", []), ensure_ascii=False),
+                                 source=collected.get("source", ""),
+                                 commit_sha=sha,
+                                 raw_json=json.dumps(collected, ensure_ascii=False))
+            status = "done" if (dry_run or info["score"] is not None) else "failed"
+            state.set_stage(cfg.assignment_name, key, "grade", status,
+                            info.get("error") or f"task={info['task_status']} score={info['score']}")
+        except Exception as exc:
+            info["error"] = str(exc)
+            log().error("学生 %s 收集分数失败：%s", key, exc)
+            state.set_stage(cfg.assignment_name, key, "grade", "failed", str(exc))
+        out[key] = info
+    return out
+
+
+def local_clone_score(cfg, repo: str) -> dict | None:
+    """备用通道：直接克隆仓库读 joj3_result.json（绕过 API，适合排查）。"""
+    from .provision import askpass_env, _prepare_askpass
+    from .util import run
+    with tempfile.TemporaryDirectory(prefix=f"gc-clone-{repo}-") as tmp:
+        tmp_dir = Path(tmp)
+        askpass = _prepare_askpass(tmp_dir)
+        env = askpass_env(cfg.gitea_owner, cfg.gitea_token)
+        env["GIT_ASKPASS"] = str(askpass)
+        try:
+            run(["git", "clone", "-q",
+                 f"{cfg.gitea_url}/{cfg.org}/{repo}.git", str(tmp_dir / "repo")],
+                env=env, check=True)
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            log().error("克隆 %s 失败：%s", repo, exc)
+            return None
+        p = tmp_dir / "repo" / "joj3_result.json"
+        if not p.exists():
+            return None
+        return parse_joj3_result(json.loads(p.read_text(encoding="utf-8")))

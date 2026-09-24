@@ -1,0 +1,173 @@
+# ============================================================================
+#  GC_AUTO_TA 单文件配置
+#  Canvas 拉作业 → 解包 → Gitea 建仓 → JOJ3 评分 → Canvas 回写
+#
+#  用法：
+#     python -m gc_auto_ta new-config -o config.yaml     # 复制本文件（权限 600）
+#     python -m gc_auto_ta doctor -c config.yaml         # 自检（只读，不写任何远端）
+#     python -m gc_auto_ta run    -c config.yaml         # 全流程跑通（回写默认 dry）
+#     python -m gc_auto_ta run    -c config.yaml --live  # 确认无误后真正回写 Canvas
+#
+#  密钥：可以直接写在本文件（记得 chmod 600 且不要提交到 git），
+#       也可以写成 "${CANVAS_API_TOKEN}" 从环境变量 / .env 取值（推荐）。
+# ============================================================================
+
+# ---------------------------------------------------------------- 1. Canvas
+canvas:
+  base_url: https://oc.sjtu.edu.cn          # 站点地址
+  token: "${CANVAS_API_TOKEN}"              # 或直接粘贴 token 字符串
+  course_id: 12345                          # 课程 ID（Canvas 课程 URL 里的数字）
+  assignment_id: 123456                     # 作业 ID（作业页面 URL 里的数字）
+  min_interval: 0.10                        # 每次 Canvas 请求的最小间隔（限流，秒）
+
+# ---------------------------------------------------------------- 2. Gitea
+gitea:
+  url: http://localhost:3000                # 站点地址（宿主机/本机）
+  internal_url: http://localhost:3000       # job 容器内访问 Gitea 的地址（本机部署即 localhost:3000）
+  token: "${GITEA_TOKEN}"                   # PAT：write:repository + write:organization + read:user
+  owner: your-gitea-username                # PAT 所属用户名（私有仓库 clone 时作为 basic auth 用户名）
+  org: JOJ                                  # 仓库建在哪个组织（该组织必须有 runner）
+  min_interval: 0.05
+
+# ---------------------------------------------------------------- 3. 作业 / 仓库
+assignment:
+  name: hw1                                 # 作业标识：用于目录名、提交信息、报告名
+  repo_prefix: hw1                          # 仓库名 = <前缀>-<学生标识>；留空用 name
+  repo_private: false                       # 公开仓库 + 公开组织时，workflow 可匿名 clone（最省事）
+  default_branch: main
+  description: "JOJ3 自动评测"
+
+# ---------------------------------------------------------------- 4. 评分（JOJ3）
+grading:
+  layout: in_repo            # in_repo（评分文件放学生仓库）| config_repo（放 TA 私有仓库，学生看不到）
+  publish: issue             # none（只写日志）| file（push score-<sha7>.json 回仓库）| issue（开 issue）
+  conf_root: joj             # 容器内传给 joj3 -conf-root 的相对路径
+  conf_name: conf.json
+  max_score: 100             # JOJ3 侧满分（run_tests.m 里各 parser 分数之和应等于它）
+  score_file_pattern: "score-{sha7}.json"   # 与 workflow 模板里的文件名保持一致
+  commit_prefix: feat        # 提交信息前缀：feat(hw1): <学生> submission [hw1]
+
+  # ---- 评分样例：内联文本（优先级高于 files_dir）----
+  # joj3 -conf-root joj -conf-name conf.json 会读 joj/conf.json，
+  # 测试脚本与期望输出路径都必须与 conf.json 里写的一致。
+  files:
+    joj/conf.json: |
+      {
+        "name": "hw1",
+        "sandboxExecServer": "localhost:5051",
+        "outputPath": "joj3_result.json",
+        "stages": [
+          {
+            "name": "run",
+            "executor": {
+              "name": "sandbox",
+              "with": {
+                "default": {
+                  "args": ["octave-cli", "joj/run_tests.m"],
+                  "env": ["PATH=/usr/bin:/bin:/usr/local/bin", "HOME=/tmp"],
+                  "stdin": { "content": "" },
+                  "stdout": { "name": "stdout", "max": 65536 },
+                  "stderr": { "name": "stderr", "max": 65536 },
+                  "cpuLimit": 30000000000,
+                  "clockLimit": 120000000000,
+                  "memoryLimit": 2147483648,
+                  "procLimit": 256,
+                  "copyInDir": ".",
+                  "copyOut": ["stdout", "stderr"]
+                }
+              }
+            },
+            "parsers": [
+              {
+                "name": "diff",
+                "with": {
+                  "passComment": "输出与期望完全一致",
+                  "failComment": "输出与期望不一致（注意多余空行/空格也会判错）",
+                  "cases": [
+                    {
+                      "outputs": [
+                        { "score": 100, "filename": "stdout", "answerPath": "joj/expected.txt" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "result-detail",
+                "with": { "score": 0, "showFiles": ["stderr"], "maxFileLength": 2000 }
+              }
+            ]
+          }
+        ]
+      }
+
+    joj/run_tests.m: |
+      for a = 0:1
+        for b = 0:1
+          for cin = 0:1
+            [s, c] = full_adder(a, b, cin);
+            printf("a=%d b=%d cin=%d sum=%d cout=%d\n", a, b, cin, s, c);
+          end
+        end
+      end
+
+    joj/expected.txt: |
+      a=0 b=0 cin=0 sum=0 cout=0
+      a=0 b=0 cin=1 sum=1 cout=0
+      a=0 b=1 cin=0 sum=1 cout=0
+      a=0 b=1 cin=1 sum=0 cout=1
+      a=1 b=0 cin=0 sum=1 cout=0
+      a=1 b=0 cin=1 sum=0 cout=1
+      a=1 b=1 cin=0 sum=0 cout=1
+      a=1 b=1 cin=1 sum=1 cout=1
+
+  # ---- 另一种写法：评分文件放在目录里（上面 files 为空时才生效）----
+  # files_dir: ./course-conf/hw1      # 目录内容原样搬进仓库（保持相对路径）
+
+  # workflow_template: in-repo-public-issue   # 留空按 layout+publish 自动选：
+  #   in_repo+none → in-repo-public | in_repo+file → in-repo-secret | in_repo+issue → in-repo-public-issue
+  #   config_repo+none → config-repo | config_repo+file → config-repo-secret | config_repo+issue → config-repo-issue
+
+# ---------------------------------------------------------------- 5. 解包
+unpack:
+  # 从解包结果里挑哪些文件当"学生源码"搬进仓库（按 glob 递归匹配）
+  student_file_globs: ["*.m", "*.cpp", "*.cc", "*.c", "*.h", "*.hpp", "*.py", "*.txt", "*.csv"]
+  remove_archives: false          # true = 解包成功后删掉原始压缩包
+  max_extract_bytes: 2147483648   # 解压后体积上限（防压缩炸弹），0 = 不限制
+  on_missing_submission: skip     # skip（缺交不回写）| zero（按 0 分回写）
+
+# ---------------------------------------------------------------- 6. 回写 Canvas
+writeback:
+  mode: dry                  # off | dry（只打印）| live（真写）
+  grade_mode: points         # points（换算到作业满分）| percent（"87.5%"）| raw（原样）
+  missing_score: 0           # on_missing_submission=zero 时用的分数
+  comment_template: "【自动评分】{score}/{max} 分\n{comment}"
+  # 可用占位符：{score} {max} {points} {comment} {stages} {student} {assignment}
+  comment_max_len: 4000      # Canvas 评论长度上限，超出截断
+  late_penalty_per_day: 0    # 每天扣的比例（0.1 = 每天 10%），需要 due_at
+  due_at: null               # 留空用 Canvas 作业自带的 due_at
+  bulk: true                 # true = 用 submissions/update_grades 批量接口（异步）
+  only_grade: false          # true = 只写分数不写评论
+
+# ---------------------------------------------------------------- 7. 名单覆盖（可选）
+# 自动匹配不中、或一个压缩包同时像多个学生时，在这里人工指定（程序绝不猜）。
+roster: {}
+#  roster:
+#    "2026000001":
+#      repo: hw1-alice               # 覆盖仓库名（默认 hw1-2026000001）
+#      name: 示例学生
+#      aliases: [示例学生, Sample Student, demo]
+#    "2026000002":
+#      canvas_user_id: 12345
+
+# ---------------------------------------------------------------- 8. 路径与运行参数
+paths:
+  work_dir: work                     # 中间产物：submissions/ unpacked/ code/ workspaces/
+  state_db: state/state.sqlite3      # 状态库（幂等与断点续跑）
+  report_dir: reports                # 报告输出：<report_dir>/<作业>/{results.json,csv,problems.md}
+
+limits:
+  concurrency: 4                     # 预留：并行处理数（当前实现按顺序跑，避免压垮 runner）
+  grading_poll_interval: 10          # 轮询 Actions 任务的间隔（秒）
+  grading_timeout: 1800              # 单个仓库等待评测的最长时间（秒）
+  push_retries: 3

@@ -1,0 +1,24 @@
+# 触发 JOJ3 评测（公开组织 + 公开仓库：job 里匿名 clone 即可）
+#
+# 生成者：GC_AUTO_TA（模板 in-repo-public）
+# 适用：org 与 repo 都是 public，且不需要把分数 push 回仓库（publish=none，分数靠 workflow 日志/本地 clone 读）
+name: joj3
+
+on: [push, workflow_dispatch]
+
+jobs:
+  grade:
+    runs-on: {{job_label}}
+    steps:
+      - name: get code
+        run: git clone -q {{gitea_internal}}/{{org}}/{{repo}}.git repo
+
+      - name: grade
+        working-directory: repo
+        run: joj3 -conf-root {{conf_root}} -conf-name {{conf_name}}
+
+      - name: show result
+        working-directory: repo
+        run: |
+          echo "===== joj3_result.json ====="
+          cat joj3_result.json

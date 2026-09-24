@@ -1,0 +1,34 @@
+# 触发 JOJ3 评测：评分文件不在学生仓库里，而是从 TA 私有仓库 {{config_repo}} 拉取（JOJ3 指南 scheme C）
+#
+# 生成者：GC_AUTO_TA（模板 config-repo）
+# 需要：组织级 secret {{secret_name}}（PAT：read:repository；要 push 分数再加 write:repository）
+# 好处：学生连测试用例都看不到；代价是必须配好 secret。
+name: joj3
+
+on: [push, workflow_dispatch]
+
+jobs:
+  grade:
+    runs-on: {{job_label}}
+    env:
+      GC_BASE: "{{gitea_internal}}/{{org}}/{{repo}}.git"
+      GC_CFG: "{{gitea_internal}}/{{org}}/{{config_repo}}.git"
+      GC_OWNER: "{{owner}}"
+      GC_TOKEN: ${{ secrets.{{secret_name}} }}
+    steps:
+      - name: get code and grading config
+        run: |
+          set -e
+          AUTH() { python3 -c "import os,sys;print(sys.argv[1].replace('://','://%s:%s@'%(os.environ['GC_OWNER'],os.environ['GC_TOKEN'])))" "$1"; }
+          git clone -q "$(AUTH "$GC_BASE")" repo
+          git clone -q "$(AUTH "$GC_CFG")" cfg
+
+      - name: grade
+        working-directory: repo
+        run: joj3 -conf-root ../cfg/{{conf_root}} -conf-name {{conf_name}}
+
+      - name: show result
+        working-directory: repo
+        run: |
+          echo "===== joj3_result.json ====="
+          cat joj3_result.json

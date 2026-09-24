@@ -1,0 +1,47 @@
+# 触发 JOJ3 评测 + 把结果开成 issue（公开组织 + 公开仓库，匿名 clone）
+#
+# 生成者：GC_AUTO_TA（模板 in-repo-public-issue）
+# 需要：组织级 secret {{secret_name}}（PAT，write:issue；私有组织再给 read:repository）
+# 说明：job 镜像里没有 curl，一律用 python3 发 HTTP。
+name: joj3
+
+on: [push, workflow_dispatch]
+
+jobs:
+  grade:
+    runs-on: {{job_label}}
+    steps:
+      - name: get code
+        run: git clone -q {{gitea_internal}}/{{org}}/{{repo}}.git repo
+
+      - name: grade
+        working-directory: repo
+        run: joj3 -conf-root {{conf_root}} -conf-name {{conf_name}}
+
+      - name: show result
+        working-directory: repo
+        run: |
+          echo "===== joj3_result.json ====="
+          cat joj3_result.json
+
+      - name: report as issue
+        working-directory: repo
+        env:
+          {{secret_name}}: ${{ secrets.{{secret_name}} }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          result = json.load(open("joj3_result.json"))
+          payload = json.dumps({
+              "title": "Grading result " + os.environ.get("GITHUB_SHA", "")[:7],
+              "body": "commit `%s`\n\n```json\n%s\n```" % (
+                  os.environ.get("GITHUB_SHA", ""),
+                  json.dumps(result, ensure_ascii=False, indent=2)),
+          }).encode()
+          req = urllib.request.Request(
+              "{{gitea_internal}}/api/v1/repos/%s/issues" % os.environ["GITHUB_REPOSITORY"],
+              data=payload,
+              headers={"Content-Type": "application/json",
+                       "Authorization": "token " + os.environ["{{secret_name}}"]})
+          print("issue:", urllib.request.urlopen(req).status)
+          PY
