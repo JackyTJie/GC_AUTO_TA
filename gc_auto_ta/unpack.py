@@ -61,6 +61,8 @@ def extract(archive: Path, dest: Path, max_bytes: int = 0) -> ExtractResult:
     """解包到 dest。优先用标准库（zip / tar），其余交给 bsdtar / 7z / unrar。"""
     archive = Path(archive)
     dest = Path(dest)
+    if dest.exists():
+        shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     res = ExtractResult(archive=archive, dest=dest)
     name = archive.name.lower()

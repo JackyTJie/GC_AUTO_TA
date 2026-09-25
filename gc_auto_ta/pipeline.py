@@ -49,6 +49,15 @@ def save_manifest(cfg, data: dict) -> Path:
     return write_json(manifest_path(cfg), data)
 
 
+def _reset_submissions_dir(path: Path) -> Path:
+    """Clear a previous pull result before downloading fresh submissions."""
+    path = Path(path)
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _students_from_manifest(manifest: dict) -> list[Student]:
     out: list[Student] = []
     for key, info in (manifest.get("students") or {}).items():
@@ -74,8 +83,7 @@ def pull(cfg, limit: int | None = None, only: list[str] | None = None) -> dict:
 
     from .state import State
     state = State(cfg.state_db)
-    sub_root = cfg.assignment_work_dir / "submissions"
-    sub_root.mkdir(parents=True, exist_ok=True)
+    sub_root = _reset_submissions_dir(cfg.assignment_work_dir / "submissions")
 
     users = gw.users_by_id()
     manifest = load_manifest(cfg)
