@@ -192,6 +192,15 @@ def grade_all(cfg, gitea, state, keys: list[str] | None = None,
         run = state.last_run(cfg.assignment_name, key) or {}
         sha = run.get("commit_sha") or ""
         info = {"repo": repo, "sha": sha, "task_status": "", "score": None, "error": ""}
+        provision_status = state.stage_status(cfg.assignment_name, key, "provision")
+        if provision_status != "done":
+            info["task_status"] = "skipped"
+            info["error"] = (f"跳过评分：provision 阶段状态为 {provision_status or '未记录'}，"
+                              "建仓/推送未成功")
+            log().error("学生 %s 跳过收分：%s", key, info["error"])
+            state.set_stage(cfg.assignment_name, key, "grade", "skipped", info["error"])
+            out[key] = info
+            continue
         try:
             if dry_run:
                 info["task_status"] = "dry-run"
