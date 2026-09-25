@@ -58,6 +58,15 @@ def _reset_submissions_dir(path: Path) -> Path:
     return path
 
 
+def _reset_unpacked_dir(path: Path) -> Path:
+    """Clear a previous unpack result before extracting fresh submissions."""
+    path = Path(path)
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _students_from_manifest(manifest: dict) -> list[Student]:
     out: list[Student] = []
     for key, info in (manifest.get("students") or {}).items():
@@ -150,9 +159,8 @@ def unpack_stage(cfg) -> dict:
     by_key = {s.student_key: s for s in student_objs}
 
     raw_root = cfg.assignment_work_dir / "submissions"
-    unpack_root = cfg.assignment_work_dir / "unpacked"
+    unpack_root = _reset_unpacked_dir(cfg.assignment_work_dir / "unpacked")
     code_root = cfg.assignment_work_dir / "code"
-    unpack_root.mkdir(parents=True, exist_ok=True)
     code_root.mkdir(parents=True, exist_ok=True)
 
     unmatched: list[str] = []
