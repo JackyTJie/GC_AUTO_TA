@@ -40,6 +40,8 @@ DEFAULTS: dict[str, Any] = {
         "internal_url": "http://localhost:3000",
         "owner": "",
         "org": "JOJ",
+        # 组织可见性要如实填：私有组织下的「公开仓库」匿名一样读不到（Gitea 按 owner 可见性拦截）
+        "org_private": False,
         "min_interval": 0.05,
     },
     "assignment": {
@@ -57,7 +59,7 @@ DEFAULTS: dict[str, Any] = {
         "max_score": 100,
         "files_dir": None,            # 目录：内容原样搬进仓库（与 files 二选一，files 优先）
         "files": {},                  # 内联：{"joj/run_tests.m": "文本内容", ...}
-        "workflow_template": None,    # 留空按 layout+publish 自动选
+        "workflow_template": None,    # 留空按 layout+publish+可见性自动选
         "config_repo": None,          # layout=config_repo 时，评分文件所在的 TA 私有仓库名
         "commit_prefix": "feat",      # 提交信息：feat(<作业>): <学生> submission [<作业>]
         "score_file_pattern": "score-{sha7}.json",
@@ -248,6 +250,10 @@ class Config:
     def org(self) -> str:
         return str(self.get("gitea.org") or "")
 
+    @property
+    def org_private(self) -> bool:
+        return bool(self.get("gitea.org_private"))
+
     # ------------------------------------------------------------------ 作业
     @property
     def assignment_name(self) -> str:
@@ -309,17 +315,33 @@ class Config:
 
     @property
     def workflow_template(self) -> str:
+        """显式指定优先；留空按 layout + publish + 仓库/组织可见性自动选。
+
+        私有组织/私有仓库下匿名 clone 必 401（容器无终端，git 卡在 could not read Username），
+        所以 in_repo 形态必须按可见性分流到带 token 的模板；config_repo 各模板本来就带 token
+        clone，不受可见性影响。
+        凑不出匹配就抛错——绝不静默退回匿名模板，那等于往每个学生仓库里埋雷。
+        """
         explicit = self.get("grading.workflow_template")
         if explicit:
             return str(explicit)
-        return {
-            ("in_repo", "none"): "in-repo-public",
-            ("in_repo", "file"): "in-repo-secret",
-            ("in_repo", "issue"): "in-repo-public-issue",
-            ("config_repo", "none"): "config-repo",
-            ("config_repo", "file"): "config-repo-secret",
-            ("config_repo", "issue"): "config-repo-issue",
-        }.get((self.layout, self.publish), "in-repo-public-issue")
+        private = self.repo_private or self.org_private
+        if self.layout == "config_repo":
+            table = {"none": "config-repo", "file": "config-repo-secret",
+                     "issue": "config-repo-issue"}
+        elif private:
+            # in_repo+none 在私有形态下没有安全模板（匿名 clone 必死），故意不提供 → 走下面的报错
+            table = {"file": "in-repo-secret", "issue": "in-repo-secret-issue"}
+        else:
+            table = {"none": "in-repo-public", "file": "in-repo-secret",
+                     "issue": "in-repo-public-issue"}
+        name = table.get(self.publish)
+        if not name:
+            raise ValueError(
+                f"layout={self.layout!r} publish={self.publish!r} private={private} "
+                f"凑不出 workflow 模板：私有组织/仓库不能用匿名 clone，"
+                f"请显式指定 grading.workflow_template 或调整 publish/layout")
+        return name
 
     def grading_files(self) -> dict[str, str]:
         """返回 {仓库内相对路径: 文件内容}。

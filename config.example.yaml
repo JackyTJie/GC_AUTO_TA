@@ -27,6 +27,8 @@ gitea:
   token: "${GITEA_TOKEN}"                   # PAT：write:repository + write:organization + read:user
   owner: your-gitea-username                # PAT 所属用户名（私有仓库 clone 时作为 basic auth 用户名）
   org: JOJ                                  # 仓库建在哪个组织（该组织必须有 runner）
+  org_private: false                        # 组织是否私有。私有组织下连「公开仓库」匿名都读不到，
+                                            # 自动选择模板时会按这个值分流到带 token 的 clone 模板
   min_interval: 0.05
 
 # ---------------------------------------------------------------- 3. 作业 / 仓库
@@ -132,9 +134,10 @@ grading:
   # ---- 另一种写法：评分文件放在目录里（上面 files 为空时才生效）----
   # files_dir: ./course-conf/hw1      # 目录内容原样搬进仓库（保持相对路径）
 
-  # workflow_template: in-repo-public-issue   # 留空按 layout+publish 自动选：
-  #   in_repo+none → in-repo-public | in_repo+file → in-repo-secret | in_repo+issue → in-repo-public-issue
-  #   config_repo+none → config-repo | config_repo+file → config-repo-secret | config_repo+issue → config-repo-issue
+  # workflow_template: in-repo-secret-issue   # 留空按 layout+publish+可见性（org_private/repo_private）自动选：
+  #   公开 in_repo：none = in-repo-public | file = in-repo-secret | issue = in-repo-public-issue
+  #   私有 in_repo：file = in-repo-secret | issue = in-repo-secret-issue（none 无安全模板，直接报错）
+  #   config_repo：none = config-repo | file = config-repo-secret | issue = config-repo-issue（自带 token，不看可见性）
 
 # ---------------------------------------------------------------- 5. 解包
 unpack:

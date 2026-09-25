@@ -10,7 +10,8 @@
 #   export GITEA_OWNER="your-gitea-username"             # PAT 所属用户名
 #   export ORG="JOJ"
 #   export ASSIGNMENT="hw1"
-#   export PUBLIC_REPO="true"           # true=公开仓库（workflow 可匿名 clone）
+#   export PUBLIC_REPO="true"           # true=公开仓库（workflow 匿名 clone）；
+#                                       # false=私有 → 先给组织建 secret GRADE_TOKEN（值=同一个 PAT，加 read:repository）
 #   export CONF_DIR="./course-conf/hw1" # 评分文件目录（conf.json / run_tests.m / expected.txt）
 #   ./scripts/import-submissions.sh ./work/hw1/code
 #
@@ -50,6 +51,15 @@ for dir in "$SUBMISSIONS_DIR"/*/; do
   cp -r "$dir"/. "$work"/ 2>/dev/null || true
   printf '* text=auto eol=lf\n' > "$work/.gitattributes"
 
+  # 私有仓库必须带 token clone：容器里匿名 401，且无终端，git 卡在 could not read Username。
+  # $D 是字面量 $，用来在 heredoc 里拼出 ${{ secrets.GRADE_TOKEN }}（直接写会被 bash 当坏参数展开）。
+  D='$'
+  if [ "$PUBLIC_REPO" = true ]; then
+    clone_cmd="git clone -q $GITEA_URL/$ORG/$repo.git repo"
+  else
+    clone_cmd="git clone -q \"${GITEA_URL%%://*}://$GITEA_OWNER:$D{{ secrets.GRADE_TOKEN }}@${GITEA_URL#*://}/$ORG/$repo.git\" repo"
+  fi
+
   cat > "$work/.gitea/workflows/joj3.yaml" <<YAML
 name: joj3
 on: [push, workflow_dispatch]
@@ -58,7 +68,7 @@ jobs:
     runs-on: $RUNNER_LABEL
     steps:
       - name: get code
-        run: git clone -q $GITEA_URL/$ORG/$repo.git repo
+        run: $clone_cmd
       - name: grade
         working-directory: repo
         run: joj3 -conf-root $CONF_ROOT -conf-name $CONF_NAME
