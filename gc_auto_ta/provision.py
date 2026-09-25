@@ -51,6 +51,36 @@ def _prepare_askpass(tmp_dir: Path) -> Path:
     return p
 
 
+def _remove_existing_workspace(dest: Path) -> None:
+    """Remove a previous workspace, including Windows read-only Git objects."""
+    dest = Path(dest)
+    if not dest.exists():
+        log().debug("旧工作区不存在，无需清理：%s", dest)
+        return
+
+    log().debug("发现旧工作区，开始清理：%s", dest)
+
+    def onerror(func, path, exc_info):
+        exc = exc_info[1]
+        log().debug("清理工作区删除失败：func=%s path=%s error=%r；尝试清除只读属性",
+                    getattr(func, "__name__", repr(func)), path, exc)
+        try:
+            mode = os.stat(path).st_mode
+            os.chmod(path, mode | stat.S_IWRITE)
+            func(path)
+        except Exception:
+            log().debug("清除只读属性后仍无法删除：path=%s", path, exc_info=True)
+            raise
+        log().debug("清理工作区重试删除成功：%s", path)
+
+    try:
+        shutil.rmtree(dest, onerror=onerror)
+    except Exception:
+        log().error("清理旧工作区失败：%s", dest, exc_info=True)
+        raise
+    log().debug("旧工作区清理完成：%s", dest)
+
+
 def git(cfg, args: list[str], cwd: Path, askpass: Path | None = None, check: bool = True):
     cmd = ["git"]
     if askpass is not None:
@@ -71,7 +101,7 @@ def build_workspace(cfg, repo: str, student_key: str, source_files: Iterable[Pat
 
     dest = Path(dest)
     if dest.exists():
-        shutil.rmtree(dest)
+        _remove_existing_workspace(dest)
     dest.mkdir(parents=True)
 
     # 1) 评分文件（内联或目录）
