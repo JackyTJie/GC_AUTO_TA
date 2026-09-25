@@ -189,6 +189,17 @@ def split_bundle(bundle_dir: Path, dest_root: Path) -> dict[str, Path]:
     return out
 
 
+def bundle_directories(bundle_dir: Path) -> dict[str, Path]:
+    """Return top-level directories that can represent students in a bundle.
+
+    A normal student archive commonly contains several top-level files.  Those
+    files must not be mistaken for a class bundle; only directory entries are
+    candidates for per-student bundle matching.
+    """
+    return {name: path for name, path in split_bundle(bundle_dir, bundle_dir).items()
+            if path.is_dir()}
+
+
 def copy_student_files(files: Iterable[Path], dest: Path, strip_common_root: bool = True) -> list[Path]:
     """把学生源码拷进仓库工作区（保持相对路径），返回仓库内的相对路径列表。"""
     dest = Path(dest)

@@ -32,7 +32,8 @@ from pathlib import Path
 
 from .canvas_api import CanvasGateway
 from .naming import Student, load_roster, match_entries, repo_name, student_from_submission
-from .unpack import (copy_student_files, extract, gather_source_files, is_archive, split_bundle)
+from .unpack import (bundle_directories, copy_student_files, extract, gather_source_files,
+                     is_archive)
 from .util import log, read_json, write_json
 
 
@@ -166,10 +167,12 @@ def unpack_stage(cfg) -> dict:
                     if cfg.remove_archives:
                         f.unlink(missing_ok=True)
                     # 全班一个大包的情形：解出来的顶层目录能对应到不同学生 → 拆分
-                    entries = split_bundle(student_dir / f.stem, student_dir)
+                    entries = bundle_directories(student_dir / f.stem)
                     if len(entries) > 1:
                         match = match_entries(list(entries.keys()), student_objs, roster)
-                        if match.mapping and not match.ambiguous:
+                        is_bundle = (len(match.mapping) >= 2 and
+                                     not match.ambiguous and not match.unmatched)
+                        if is_bundle:
                             log().info("%s 看起来是全班大包，按目录拆分：%s", f.name,
                                        {k: v for k, v in match.mapping.items()})
                             for owner, dirs in match.mapping.items():
