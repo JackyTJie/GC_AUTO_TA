@@ -222,18 +222,34 @@ def provision_all(cfg, gitea, state, students_with_files: dict, dry_run: bool = 
 
     # layout=config_repo：先把评分文件推到一个 TA 私有仓库
     if cfg.layout == "config_repo" and not dry_run:
-        cfg_repo = cfg.config_repo or f"{cfg.assignment_name}-config"
-        gitea.ensure_repo(cfg.org, cfg_repo, private=True, default_branch=cfg.default_branch,
-                          description=f"{cfg.assignment_name} grading config")
-        ws = build_config_repo_workspace(cfg, work / "_config_repo")
-        push_workspace(cfg, ws, cfg_repo, f"chore({cfg.assignment_name}): grading config")
-        log().info("评分配置仓库已更新：%s/%s", cfg.org, cfg_repo)
+        try:
+            cfg_repo = cfg.config_repo or f"{cfg.assignment_name}-config"
+            gitea.ensure_repo(cfg.org, cfg_repo, private=True, default_branch=cfg.default_branch,
+                              description=f"{cfg.assignment_name} grading config")
+            ws = build_config_repo_workspace(cfg, work / "_config_repo")
+            push_workspace(cfg, ws, cfg_repo, f"chore({cfg.assignment_name}): grading config")
+            log().info("评分配置仓库已更新：%s/%s", cfg.org, cfg_repo)
+        except Exception as exc:
+            detail = f"共享评分配置仓库失败：{exc}"
+            for key, item in students_with_files.items():
+                repo = repo_name(cfg.repo_prefix, key)
+                state.set_stage(cfg.assignment_name, key, "provision", "failed", detail, "system")
+                out[key] = {"repo": repo, "sha": "", "error": detail, "status": "failed"}
+            return out
 
     for key, item in students_with_files.items():
         student = item["student"]
         files = item.get("files") or []
         repo = repo_name(cfg.repo_prefix, key)
-        info: dict = {"repo": repo, "sha": "", "error": ""}
+        info: dict = {"repo": repo, "sha": "", "error": "", "status": "pending"}
+        failed = state.first_student_error(cfg.assignment_name, key, ("pull", "unpack"))
+        system_error = state.first_system_error(cfg.assignment_name, key, ("pull", "unpack"))
+        if failed or system_error:
+            stage, detail = failed or system_error
+            info.update(status="skipped", error=f"跳过 provision：{stage} 阶段失败：{detail}")
+            state.set_stage(cfg.assignment_name, key, "provision", "skipped", info["error"])
+            out[key] = info
+            continue
         try:
             if not dry_run:
                 gitea.ensure_repo(cfg.org, repo, private=cfg.repo_private,
@@ -260,9 +276,11 @@ def provision_all(cfg, gitea, state, students_with_files: dict, dry_run: bool = 
                                  code_dir=str(ws))
             state.set_stage(cfg.assignment_name, key, "provision",
                             "done" if not info["error"] else "failed", info.get("error", ""))
+            info["status"] = "done" if not info["error"] else "failed"
         except Exception as exc:
             info["error"] = str(exc)
+            info["status"] = "failed"
             log().error("学生 %s 建仓/推送失败：%s", key, exc)
-            state.set_stage(cfg.assignment_name, key, "provision", "failed", str(exc))
+            state.set_stage(cfg.assignment_name, key, "provision", "failed", str(exc), "system")
         out[key] = info
     return out

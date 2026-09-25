@@ -84,6 +84,18 @@ Canvas API ──► 附件/正文落盘 ──► 解包+归集源码 ──►
 * 默认 `dry`：只打印将写入的内容；`--live` 才真写
 * 每条回写记录进 `state.writebacks`（含写入前的原始分，便于对账/回滚参考）
 
+### 错误分类与跨阶段处理
+
+阶段错误带有 `error_kind`：
+
+* `student`：损坏压缩包、非法提交结构等由学生提交内容造成的错误。后续阶段标记为
+  `skipped`，writeback 按 0 分覆盖 Canvas。
+* `system`：Canvas/Gitea/API、权限、网络、runner、本地文件系统或配置错误。后续阶段
+  标记为 `skipped`，只在报告和状态库中提示，不据此覆盖成绩。
+
+JOJ 正常返回的 0 分是有效成绩，不属于错误状态。dry writeback 只生成回写计划，不提交
+Canvas；批量 Canvas 回写只有 Progress 状态为 `completed` 时才记为成功。
+
 ## 状态与幂等
 
 状态库 `state/state.sqlite3` 五张表：

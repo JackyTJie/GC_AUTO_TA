@@ -187,11 +187,21 @@ def grade_all(cfg, gitea, state, keys: list[str] | None = None,
         if keys and key not in keys:
             continue
         repo = row.get("repo")
-        if not repo:
-            continue
         run = state.last_run(cfg.assignment_name, key) or {}
         sha = run.get("commit_sha") or ""
         info = {"repo": repo, "sha": sha, "task_status": "", "score": None, "error": ""}
+        failed = state.first_student_error(cfg.assignment_name, key, ("pull", "unpack", "provision"))
+        system_error = state.first_system_error(cfg.assignment_name, key, ("pull", "unpack", "provision"))
+        if failed or system_error:
+            stage, detail = failed or system_error
+            info["task_status"] = "skipped"
+            info["error"] = f"跳过评分：{stage} 阶段失败：{detail}"
+            log().error("学生 %s 跳过收分：%s", key, info["error"])
+            state.set_stage(cfg.assignment_name, key, "grade", "skipped", info["error"])
+            out[key] = info
+            continue
+        if not repo:
+            continue
         provision_status = state.stage_status(cfg.assignment_name, key, "provision")
         if provision_status != "done":
             info["task_status"] = "skipped"
@@ -226,7 +236,7 @@ def grade_all(cfg, gitea, state, keys: list[str] | None = None,
         except Exception as exc:
             info["error"] = str(exc)
             log().error("学生 %s 收集分数失败：%s", key, exc)
-            state.set_stage(cfg.assignment_name, key, "grade", "failed", str(exc))
+            state.set_stage(cfg.assignment_name, key, "grade", "failed", str(exc), "system")
         out[key] = info
     return out
 

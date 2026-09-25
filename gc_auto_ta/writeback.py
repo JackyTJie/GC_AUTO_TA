@@ -124,14 +124,23 @@ def run(cfg, state, rows: list[dict] | None = None, live: bool | None = None,
         log().warning("没有可回写的记录（先跑 grade 收集分数）")
         return {}
 
-    gw = CanvasGateway(cfg.canvas_base_url, cfg.canvas_token,
-                       cfg.canvas_course_id, cfg.canvas_assignment_id,
-                       min_interval=cfg.canvas_min_interval)
-    props = gw.assignment_props()
-    points_possible = props.get("points_possible")
-    due_at = cfg.get("writeback.due_at") or props.get("due_at")
-    anonymous = bool(props.get("anonymous_grading"))
-    anon_ids: dict[int, str] = gw.gradeable_anonymous_ids() if anonymous else {}
+    try:
+        gw = CanvasGateway(cfg.canvas_base_url, cfg.canvas_token,
+                           cfg.canvas_course_id, cfg.canvas_assignment_id,
+                           min_interval=cfg.canvas_min_interval)
+        props = gw.assignment_props()
+        points_possible = props.get("points_possible")
+        due_at = cfg.get("writeback.due_at") or props.get("due_at")
+        anonymous = bool(props.get("anonymous_grading"))
+        anon_ids: dict[int, str] = gw.gradeable_anonymous_ids() if anonymous else {}
+    except Exception as exc:
+        detail = f"Canvas 回写初始化失败：{exc}"
+        results = {}
+        for row in targets:
+            key = row["student_key"]
+            results[key] = {"error": detail}
+            state.set_stage(cfg.assignment_name, key, "writeback", "failed", detail, "system")
+        return results
 
     bulk = cfg.writeback_bulk if bulk is None else bulk
     dry = mode != "live"
@@ -142,10 +151,21 @@ def run(cfg, state, rows: list[dict] | None = None, live: bool | None = None,
         key = row["student_key"]
         uid = row.get("canvas_user_id")
         raw = row.get("raw_score")
+        failed = state.first_student_error(cfg.assignment_name, key,
+                                           ("pull", "unpack", "provision", "grade"))
+        system_error = state.first_system_error(cfg.assignment_name, key,
+                                                ("pull", "unpack", "provision", "grade"))
         if uid is None:
             results[key] = {"error": "缺 canvas_user_id"}
             continue
-        if raw is None:
+        if system_error:
+            stage, detail = system_error
+            results[key] = {"error": f"前置系统错误：{stage}: {detail}"}
+            state.set_stage(cfg.assignment_name, key, "writeback", "failed", results[key]["error"], "system")
+            continue
+        if failed:
+            raw = 0
+        elif raw is None:
             if cfg.on_missing_submission != "zero" and cfg.get("unpack.on_missing_submission") != "zero":
                 log().warning("%s 没有分数，跳过（on_missing_submission=skip）", key)
                 results[key] = {"skipped": "no score"}
@@ -162,7 +182,8 @@ def run(cfg, state, rows: list[dict] | None = None, live: bool | None = None,
 
         grade_info = compute_grade(cfg, float(raw), points_possible,
                                    submitted_at=sub_meta, due_at=due_at)
-        comment = "" if cfg.only_grade else build_comment(cfg, row, grade_info)
+        comment_row = row if raw == row.get("raw_score") else {**row, "raw_score": raw}
+        comment = "" if cfg.only_grade else build_comment(cfg, comment_row, grade_info)
         entry = {"posted_grade": grade_info["posted_grade"]}
         if comment:
             entry["text_comment"] = comment
@@ -177,16 +198,36 @@ def run(cfg, state, rows: list[dict] | None = None, live: bool | None = None,
     log().info("%s：准备回写 %d 人（%s）", cfg.assignment_name, len(payload),
                "演练" if dry else "写入 Canvas")
     if bulk and len(payload) > 1 and not anonymous:
-        outcome = gw.post_grades_bulk(payload, dry_run=dry,
-                                      poll_interval=cfg.poll_interval,
-                                      poll_timeout=cfg.grading_timeout)
-        log().info("批量回写结果：%s", outcome)
+        try:
+            outcome = gw.post_grades_bulk(payload, dry_run=dry,
+                                          poll_interval=cfg.poll_interval,
+                                          poll_timeout=cfg.grading_timeout)
+            log().info("批量回写结果：%s", outcome)
+            if not dry and outcome.get("workflow_state") != "completed":
+                detail = f"Canvas 批量回写未完成：{outcome.get('workflow_state')}"
+                for uid in payload:
+                    key = next((r["student_key"] for r in targets
+                                if int(r.get("canvas_user_id") or 0) == uid), str(uid))
+                    results[key] = {"error": detail}
+                    state.set_stage(cfg.assignment_name, key, "writeback", "failed", detail, "system")
+        except Exception as exc:
+            detail = f"Canvas 批量回写失败：{exc}"
+            for uid in payload:
+                key = next((r["student_key"] for r in targets
+                            if int(r.get("canvas_user_id") or 0) == uid), str(uid))
+                results[key] = {"error": detail}
+                state.set_stage(cfg.assignment_name, key, "writeback", "failed", detail, "system")
     else:
         if anonymous:
             log().warning("该作业开启了匿名批改，逐条走 anonymous_submissions 接口")
         for uid, entry in payload.items():
             key = next((r["student_key"] for r in targets if int(r.get("canvas_user_id") or 0) == uid), str(uid))
             anon = anon_ids.get(uid) if anonymous else None
+            if anonymous and not anon:
+                detail = "无法获取该学生的 anonymous_id"
+                results[key] = {"error": detail}
+                state.set_stage(cfg.assignment_name, key, "writeback", "failed", detail, "system")
+                continue
             try:
                 gw.post_grade(uid, entry["posted_grade"], entry.get("text_comment", ""),
                               dry_run=dry, anonymous_id=anon)

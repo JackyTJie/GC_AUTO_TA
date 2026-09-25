@@ -98,6 +98,19 @@ writeback:
 4. 确认 `on_missing_submission` 的取舍：缺交要不要记 0（`zero`）还是不动（`skip`）
 5. 分批写：`--only 学号1,学号2` 先来两个人，再去掉 `--only` 全量
 
+## 错误与 0 分覆盖
+
+writeback 只对前置阶段明确标记为 `error_kind=student` 的学生构造 0 分 payload。学生提交
+损坏、非法或无法归集时，流程会标记错误并跳过后续评分阶段；live writeback 最终覆盖为 0
+分，旧分数保存在 `previous_score` 中。
+
+Canvas、Gitea、Actions、runner、网络、权限、配置和本地文件系统错误标记为
+`error_kind=system`，只报告问题，不把已有成绩改成 0。JOJ 评测正常返回的 score=0 是普通
+评分结果，仍按正常成绩保存和回写。
+
+批量回写只有 Canvas Progress 返回 `completed` 才记录成功；失败、超时或异常会逐学生记录
+writeback 错误。匿名作业无法取得 anonymous id 时不会退回普通学生 submission 接口。
+
 ## 撤销与重写
 
 * 重写：改完配置直接再跑 `writeback --live`（会覆盖分数与新增评论，旧评论仍留在 SpeedGrader 里）

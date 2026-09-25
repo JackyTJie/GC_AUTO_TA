@@ -203,6 +203,7 @@ def cmd_run(args) -> int:
     print()
 
     steps = args.stages or ["pull", "unpack", "provision", "grade", "report", "writeback"]
+    report_failed = False
     for step in steps:
         print(f"\n===== {step} =====")
         ns = argparse.Namespace(config=args.config, verbose=args.verbose, only=args.only,
@@ -210,16 +211,27 @@ def cmd_run(args) -> int:
                                 live=args.live, no_bulk=args.no_bulk, stage=args.stage,
                                 org=None, course=None, assignment=None,
                                 output=None, force=False)
-        code = {
-            "pull": cmd_pull, "unpack": cmd_unpack, "provision": cmd_provision,
-            "grade": cmd_grade, "report": cmd_report, "writeback": cmd_writeback,
-        }[step](ns)
+        try:
+            code = {
+                "pull": cmd_pull, "unpack": cmd_unpack, "provision": cmd_provision,
+                "grade": cmd_grade, "report": cmd_report, "writeback": cmd_writeback,
+            }[step](ns)
+        except Exception as exc:
+            if step != "report":
+                raise
+            report_failed = True
+            code = 1
+            log().error("报告阶段失败，将继续尝试回写：%s", exc)
+        if step == "report" and code not in (0, 2):
+            report_failed = True
+            print("报告阶段失败；继续尝试 writeback，最终退出码将提示该问题。")
+            continue
         if code not in (0, 2):       # 2 = 部分学生失败，继续跑完
             print(f"\n阶段 {step} 失败（退出码 {code}），中止。可单独重跑该阶段。")
             return code
     print("\n全流程结束。回写为 dry 时请检查 reports/ 后再执行："
           f"\n  python -m gc_auto_ta writeback -c {Path(args.config).name} --live")
-    return 0
+    return 1 if report_failed else 0
 
 
 # --------------------------------------------------------------------------- parser

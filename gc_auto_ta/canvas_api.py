@@ -34,6 +34,7 @@ class DownloadedSubmission:
     submitted_at: str | None
     files: list[Path]
     note: str = ""
+    error_kind: str = ""
 
 
 def html_to_text(html: str) -> str:
@@ -122,6 +123,7 @@ class CanvasGateway:
         files: list[Path] = []
         stype = str(getattr(submission, "submission_type", "") or "none")
         note = ""
+        error_kind = ""
         try:
             if stype == "online_upload":
                 for att in getattr(submission, "attachments", []) or []:
@@ -147,6 +149,7 @@ class CanvasGateway:
                 note = f"暂不支持的提交类型：{stype}（quiz / media / LTI 需人工处理）"
         except Exception as exc:
             note = f"下载失败：{exc}"
+            error_kind = "system"
             log().warning("学生 %s 下载失败：%s", student_key, exc)
 
         write_json(dest / "_canvas.json", {
@@ -169,6 +172,7 @@ class CanvasGateway:
             submitted_at=getattr(submission, "submitted_at", None),
             files=files,
             note=note,
+            error_kind=error_kind,
         )
 
     # ------------------------------------------------------------ 写回
