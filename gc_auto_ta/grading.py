@@ -12,9 +12,9 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +77,8 @@ def wait_run(cfg, gitea, repo: str, sha: str | None = None) -> dict | None:
 
 
 # --------------------------------------------------------------------------- 收集
-def collect_score(cfg, gitea, repo: str, sha: str, student_key: str = "") -> dict:
+def collect_score(cfg, gitea, repo: str, sha: str, student_key: str = "",
+                  issue_wait: float = 120.0) -> dict:
     """按 publish 策略读取本次评测结果。返回 {"score":float|None, "comment":str, "stages":[], "source":str}"""
     publish = cfg.publish
     empty = {"score": None, "comment": "", "stages": [], "source": ""}
@@ -93,18 +94,46 @@ def collect_score(cfg, gitea, repo: str, sha: str, student_key: str = "") -> dic
         return empty
 
     if publish == "issue":
-        for issue in gitea.list_issues(cfg.org, repo):
-            title = str(issue.get("title") or "")
-            if not title.lower().startswith("grading result"):
-                continue
-            body = str(issue.get("body") or "")
-            if sha and sha[:7] not in body and sha not in body:
-                continue
-            payload = _extract_json_block(body)
-            if payload is not None:
-                parsed = parse_joj3_result(payload)
-                parsed["source"] = f"issue:#{issue.get('number')}"
-                return parsed
+        deadline = time.monotonic() + max(0.0, issue_wait)
+        attempt = 0
+        while True:
+            attempt += 1
+            log().debug("开始收集 issue：repo=%s sha=%s sha7=%s student=%s attempt=%d",
+                        repo, sha, sha[:7], student_key, attempt)
+            issues = gitea.list_issues(cfg.org, repo)
+            log().debug("收到 issue 数量：repo=%s count=%d", repo, len(issues))
+            for issue in issues:
+                title = str(issue.get("title") or "")
+                number = issue.get("number")
+                is_grading = title.lower().startswith("grading result")
+                log().debug("检查 issue #%s：title=%r grading_title=%s pull_request=%r",
+                            number, title, is_grading, issue.get("pull_request"))
+                if not is_grading:
+                    log().debug("跳过 issue #%s：标题不是 Grading result", number)
+                    continue
+                body = str(issue.get("body") or "")
+                has_sha7 = bool(sha) and sha[:7] in body
+                has_full_sha = bool(sha) and sha in body
+                log().debug("issue #%s 正文：length=%d sha7=%s full_sha=%s prefix=%r",
+                            number, len(body), has_sha7, has_full_sha, body[:100])
+                if sha and not has_sha7 and not has_full_sha:
+                    log().debug("跳过 issue #%s：正文不包含目标 SHA", number)
+                    continue
+                payload = _extract_json_block(body)
+                log().debug("issue #%s JSON 提取：%s", number, payload is not None)
+                if payload is not None:
+                    parsed = parse_joj3_result(payload)
+                    parsed["source"] = f"issue:#{issue.get('number')}"
+                    log().debug("issue #%s 收分成功：score=%s", number, parsed.get("score"))
+                    return parsed
+                log().debug("跳过 issue #%s：正文没有可解析 JSON", number)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            delay = min(float(getattr(cfg, "poll_interval", 10.0)), remaining)
+            log().debug("目标评分 issue 尚未发布，%.1f 秒后重试（剩余 %.1f 秒）",
+                        delay, remaining)
+            time.sleep(delay)
         log().warning("%s 里没有找到包含本次 sha 的评分 issue", repo)
         return empty
 
@@ -127,23 +156,23 @@ def _loads(text: str) -> Any:
 
 
 def _extract_json_block(text: str) -> Any | None:
-    """从 ```json ... ``` 代码块或裸 JSON 里抠出对象/数组。"""
-    m = re.search(r"```(?:json)?\s*(.+?)```", text or "", re.S)
-    candidate = m.group(1) if m else (text or "")
-    candidate = candidate.strip()
-    if not candidate:
-        return None
-    try:
-        return json.loads(candidate)
-    except ValueError:
-        pass
-    for opener, closer in (("[", "]"), ("{", "}")):
-        i, j = candidate.find(opener), candidate.rfind(closer)
-        if 0 <= i < j:
-            try:
-                return json.loads(candidate[i:j + 1])
-            except ValueError:
-                continue
+    """Parse the first JSON fenced code block from a Markdown document."""
+    from markdown_it import MarkdownIt
+
+    tokens = MarkdownIt().parse(text or "")
+    blocks = [token for token in tokens if token.type == "fence"]
+    log().debug("Markdown AST 代码块数量：%d", len(blocks))
+    for token in blocks:
+        info = (token.info or "").strip().split(None, 1)[0].lower()
+        log().debug("Markdown AST 代码块：info=%r content_length=%d", info, len(token.content))
+        if info != "json":
+            continue
+        try:
+            return json.loads(token.content)
+        except json.JSONDecodeError as exc:
+            log().debug("json 代码块解析失败：line=%d column=%d error=%s",
+                        exc.lineno, exc.colno, exc.msg)
+            return None
     return None
 
 

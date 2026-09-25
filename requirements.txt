@@ -2,6 +2,7 @@
 canvasapi>=3.6.0
 PyYAML>=6.0
 requests>=2.31.0
+markdown-it-py>=3.0.0
 
 # 可选（解 rar / 7z 压缩包时需要；zip/tar 用标准库已够）
 # py7zr>=0.20 ; sys_platform == "linux"
