@@ -7,10 +7,10 @@
                                         |
      ┌──────────────────────────────────┴──────────────────────────────────┐
      │                                                                      │
-  [pull]              [unpack]            [provision]        [grade]      [report/writeback]
-Canvas API ──► 附件/正文落盘 ──► 解包+归集源码 ──► Gitea 建仓+推送 ──► Actions 评测 ──► 收分 ──► Canvas 回写
+  [pull]              [unpack]            [provision]        [grade]      [report]       [writeback]
+Canvas API ──► 附件/正文落盘 ──► 解包+归集源码 ──► Gitea 建仓+推送 ──► Actions 评测 ──► 收分 ──► 报告 ──► Canvas 回写
    |                    |                     |                   |              |
-   └─ submissions/      └─ unpacked/, code/   └─ workspaces/      └─ tasks API    └─ reports/ + state.sqlite3
+   └─ submissions/      └─ unpacked/, code/   └─ workspaces/      └─ tasks API    └─ reports/ + state.sqlite3     └─ Canvas API
 ```
 
 数据流最后都落进 `work/<作业>/manifest.json` 与 `state/state.sqlite3`，它们是后续阶段的唯一事实来源。

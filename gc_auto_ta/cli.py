@@ -2,8 +2,8 @@
 
     python -m gc_auto_ta new-config -o config.yaml     # 生成完整配置模板
     python -m gc_auto_ta doctor -c config.yaml         # 全链路自检（不写远端）
-    python -m gc_auto_ta run -c config.yaml            # 一把梭：拉取→解包→建仓→评测→收分→报告→回写(dry)
-    python -m gc_auto_ta run -c config.yaml --live     # 真正回写 Canvas
+    python -m gc_auto_ta run -c config.yaml            # 拉取→解包→建仓→评测→收分→报告
+    python -m gc_auto_ta writeback -c config.yaml --live  # 单独写入 Canvas
     python -m gc_auto_ta pull|unpack|provision|grade|report|writeback -c config.yaml   # 分步跑
     python -m gc_auto_ta rerun --only 2026000001     # 空提交重跑
     python -m gc_auto_ta status -c config.yaml         # 看状态库摘要
@@ -197,41 +197,28 @@ def cmd_reset(args) -> int:
 
 
 def cmd_run(args) -> int:
-    """全流程。默认回写 dry（除非 --live）。"""
+    """执行从 Canvas 拉取到成绩报告的流程，不执行 Canvas 成绩写回。"""
     cfg = _load_cfg(args)
     print(cfg.describe())
     print()
 
-    steps = args.stages or ["pull", "unpack", "provision", "grade", "report", "writeback"]
-    report_failed = False
+    steps = args.stages or ["pull", "unpack", "provision", "grade", "report"]
     for step in steps:
         print(f"\n===== {step} =====")
         ns = argparse.Namespace(config=args.config, verbose=args.verbose, only=args.only,
                                 limit=args.limit, no_wait=False, dry_run=args.dry_run,
-                                live=args.live, no_bulk=args.no_bulk, stage=args.stage,
                                 org=None, course=None, assignment=None,
                                 output=None, force=False)
-        try:
-            code = {
-                "pull": cmd_pull, "unpack": cmd_unpack, "provision": cmd_provision,
-                "grade": cmd_grade, "report": cmd_report, "writeback": cmd_writeback,
-            }[step](ns)
-        except Exception as exc:
-            if step != "report":
-                raise
-            report_failed = True
-            code = 1
-            log().error("报告阶段失败，将继续尝试回写：%s", exc)
-        if step == "report" and code not in (0, 2):
-            report_failed = True
-            print("报告阶段失败；继续尝试 writeback，最终退出码将提示该问题。")
-            continue
+        code = {
+            "pull": cmd_pull, "unpack": cmd_unpack, "provision": cmd_provision,
+            "grade": cmd_grade, "report": cmd_report,
+        }[step](ns)
         if code not in (0, 2):       # 2 = 部分学生失败，继续跑完
             print(f"\n阶段 {step} 失败（退出码 {code}），中止。可单独重跑该阶段。")
             return code
-    print("\n全流程结束。回写为 dry 时请检查 reports/ 后再执行："
+    print("\n报告阶段完成。确认 reports/ 内容后，请单独执行："
           f"\n  python -m gc_auto_ta writeback -c {Path(args.config).name} --live")
-    return 1 if report_failed else 0
+    return 0
 
 
 # --------------------------------------------------------------------------- parser
@@ -295,15 +282,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--only", default=None)
     sp.set_defaults(func=cmd_reset)
 
-    sp = sub.add_parser("run", help="全流程一把梭")
-    sp.add_argument("--live", action="store_true", help="回写阶段真正写 Canvas")
-    sp.add_argument("--dry-run", action="store_true", help="全部演练模式")
-    sp.add_argument("--no-bulk", action="store_true")
+    sp = sub.add_parser("run", help="执行到成绩报告（不写入 Canvas）")
+    sp.add_argument("--dry-run", action="store_true", help="建仓和评分阶段使用演练模式")
     sp.add_argument("--limit", type=int, default=None, help="只处理前 N 份（试跑用）")
     sp.add_argument("--only", default=None)
     sp.add_argument("--stages", nargs="*", default=None,
-                    help="只跑指定阶段，例如 --stages pull unpack")
-    sp.add_argument("--stage", default=None)
+                    choices=["pull", "unpack", "provision", "grade", "report"],
+                    help="只跑指定阶段，例如 --stages pull unpack report")
     sp.set_defaults(func=cmd_run)
 
     # 通用覆盖项（所有子命令都可用）

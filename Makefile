@@ -1,15 +1,14 @@
 PY ?= python3
 CONFIG ?= config.yaml
 
-.PHONY: help install check new-config doctor run run-live pull unpack provision grade report writeback status clean
+.PHONY: help install check new-config doctor run pull unpack provision grade report writeback writeback-live status clean
 
 help:
 	@echo "make install     安装 Python 依赖"
 	@echo "make check       语法检查（compileall）"
 	@echo "make new-config  复制 config.example.yaml → config.yaml（权限 600）"
 	@echo "make doctor      全链路自检（只读）"
-	@echo "make run         全流程（回写 dry）"
-	@echo "make run-live    全流程 + 真正回写 Canvas"
+	@echo "make run         执行到成绩报告（不写入 Canvas）"
 	@echo "make pull/unpack/provision/grade/report/writeback  分步执行"
 	@echo "make status      查看状态库"
 	@echo "make clean       清掉 work/ reports/（保留 state/）"
@@ -28,9 +27,6 @@ doctor:
 
 run:
 	$(PY) -m gc_auto_ta run -c $(CONFIG)
-
-run-live:
-	$(PY) -m gc_auto_ta run -c $(CONFIG) --live
 
 pull:
 	$(PY) -m gc_auto_ta pull -c $(CONFIG)

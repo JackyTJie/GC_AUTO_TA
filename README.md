@@ -9,8 +9,7 @@ Canvas 提交 ──► 解包/归集 ──► Gitea 建仓+推送 ──► JO
 
 * **一个配置文件** 装下全部：两个 token、课程/作业 ID、评分样例（conf.json / 测试脚本 / 期望输出）、
   解包规则、回写策略、名单覆盖。
-* **一条命令** 跑完全程：`python -m gc_auto_ta run -c config.yaml`
-  （回写默认 `dry`，只打印不写；确认无误再加 `--live`）。
+* **两条命令分阶段执行**：先用 `run` 生成成绩报告，确认无误后再用 `writeback --live` 写入 Canvas。
 * **三处不再手抖**：建仓命名、评分文件灌入、分数回填，全部由状态库保证幂等与断点续跑。
 * **人不下场不猜**：压缩包匹配不到学生、或同时像多个学生时，只记录在 `unmatched / ambiguous`，
   绝不自动归因（宁可在展示层分裂，不可把分数错挂）。
@@ -22,7 +21,7 @@ python3 -m pip install -r requirements.txt     # canvasapi / PyYAML / requests
 sudo apt install libarchive-tools p7zip-full   # 可选：解 rar/7z 压缩包（zip/tar 用标准库即可）
 ```
 
-## 三步跑通
+## 四步跑通
 
 ```bash
 # 1) 生成配置（权限自动设为 600）
@@ -34,10 +33,11 @@ python3 -m gc_auto_ta new-config -o config.yaml
 # 2) 自检（只读：不建仓、不打分、不回写）
 python3 -m gc_auto_ta doctor -c config.yaml
 
-# 3) 全流程（回写 dry）；先 --limit 2 拿两个学生试跑
+# 3) 执行到成绩报告；先 --limit 2 拿两个学生试跑
 python3 -m gc_auto_ta run -c config.yaml --limit 2
 python3 -m gc_auto_ta run -c config.yaml
-python3 -m gc_auto_ta writeback -c config.yaml --live    # 看完成绩报告再真正写 Canvas
+# 4) 确认 reports/ 后单独写入 Canvas
+python3 -m gc_auto_ta writeback -c config.yaml --live
 ```
 
 ## 命令速查
@@ -55,7 +55,7 @@ python3 -m gc_auto_ta writeback -c config.yaml --live    # 看完成绩报告再
 | `rerun` | 空提交触发重跑 | `--only` |
 | `status` | 配置摘要 + 状态库统计 | `-c` |
 | `reset` | 清某阶段状态强制重跑 | `--stage grade --only` |
-| `run` | 全流程一把梭 | `--live --dry-run --limit --only --stages ...` |
+| `run` | 执行到成绩报告，不写入 Canvas | `--dry-run --limit --only --stages ...` |
 
 全部子命令都支持 `--org / --course / --assignment` 临时覆盖配置里的组织与 Canvas ID。
 

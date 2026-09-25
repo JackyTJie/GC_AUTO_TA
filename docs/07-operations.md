@@ -33,9 +33,12 @@ python3 -m gc_auto_ta rerun  -c config.yaml [--only ...]        # 空提交重�
 python3 -m gc_auto_ta status -c config.yaml                     # 配置摘要 + 状态统计
 python3 -m gc_auto_ta reset  -c config.yaml --stage grade --only k1   # 清阶段状态强制重跑
 
-# 一把梭
-python3 -m gc_auto_ta run -c config.yaml [--live] [--dry-run] [--limit N] [--only ...] \
-        [--stages pull unpack provision grade report writeback]
+# 第一阶段：执行到成绩报告（不写入 Canvas）
+python3 -m gc_auto_ta run -c config.yaml [--dry-run] [--limit N] [--only ...] \
+        [--stages pull unpack provision grade report]
+
+# 第二阶段：确认报告后，单独执行 Canvas 写回
+python3 -m gc_auto_ta writeback -c config.yaml [--live] [--no-bulk] [--only ...]
 ```
 
 ## 第一次上生产：按这个顺序做
@@ -50,7 +53,7 @@ python3 -m gc_auto_ta run -c config.yaml [--live] [--dry-run] [--limit N] [--onl
 8. `report` → 分数说得通吗？0 分了是什么原因？
 9. `writeback`（dry）→ 看将写入的分数与评语
 10. `writeback --live --only <那两个人>` → 去 Canvas 上核对
-11. 全量：`run -c config.yaml`（回写仍 dry）→ `report` 核对 → `writeback --live`
+11. 全量：`run -c config.yaml`（执行到报告）→ 核对 `report` 输出 → `writeback --live`
 12. 收尾：`status`，把 `state/` 与 `reports/` 备份留档
 
 ## 断点续跑
