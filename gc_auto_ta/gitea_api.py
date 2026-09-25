@@ -195,8 +195,24 @@ class GiteaClient:
     def list_issues(self, owner: str, repo: str, state: str = "all") -> list[dict]:
         data = self.request("GET", f"/repos/{owner}/{repo}/issues", params={"state": state,
                                                                             "limit": 50},
-                            raise_on_error=False, ok_statuses=(200,)) or []
-        return [i for i in data if "pull_request" not in i]
+                            raise_on_error=False, ok_statuses=(200,))
+        if data is None:
+            log().debug("list issues 返回空值：%s/%s state=%s（可能是 API 非 200）",
+                        owner, repo, state)
+            return []
+        log().debug("list issues 原始返回：%s/%s count=%d", owner, repo,
+                    len(data) if isinstance(data, list) else -1)
+        if not isinstance(data, list):
+            log().debug("list issues 返回类型异常：%s", type(data).__name__)
+            return []
+        # Gitea installations may populate ``pull_request`` on ordinary
+        # issues too. Grading results are identified by title later, so keep
+        # them even when that field is present; filter only non-grading PRs.
+        out = [i for i in data
+               if not i.get("pull_request")
+               or str(i.get("title") or "").lower().startswith("grading result")]
+        log().debug("list issues 过滤后：%s/%s count=%d", owner, repo, len(out))
+        return out
 
     # ------------------------------------------------------------ 长任务
     def wait_task(self, owner: str, repo: str, head_sha: str | None = None,
