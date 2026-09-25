@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS stages (
     stage       TEXT NOT NULL,
     status      TEXT NOT NULL,
     detail      TEXT,
+    error_kind  TEXT NOT NULL DEFAULT '',
     updated_at  REAL,
     PRIMARY KEY (assignment, student_key, stage)
 );
@@ -94,7 +95,14 @@ class State:
         self.db = sqlite3.connect(str(self.path))
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        self._migrate_schema()
         self.db.commit()
+
+    def _migrate_schema(self) -> None:
+        """Apply additive, idempotent migrations to databases created by older versions."""
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(stages)")}
+        if "error_kind" not in columns:
+            self.db.execute("ALTER TABLE stages ADD COLUMN error_kind TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         self.db.close()
@@ -132,12 +140,14 @@ class State:
 
     # ------------------------------------------------------------ stages
     def set_stage(self, assignment: str, student_key: str, stage: str,
-                  status: str, detail: str = "") -> None:
+                  status: str, detail: str = "", error_kind: str = "") -> None:
+        category = error_kind if error_kind in {"student", "system"} else ""
         self.db.execute(
-            "INSERT INTO stages (assignment,student_key,stage,status,detail,updated_at) "
-            "VALUES (?,?,?,?,?,?) ON CONFLICT(assignment,student_key,stage) DO UPDATE SET "
-            "status=excluded.status, detail=excluded.detail, updated_at=excluded.updated_at",
-            (assignment, student_key, stage, status, detail[:2000], _now()),
+            "INSERT INTO stages (assignment,student_key,stage,status,detail,error_kind,updated_at) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(assignment,student_key,stage) DO UPDATE SET "
+            "status=excluded.status, detail=excluded.detail, error_kind=excluded.error_kind, "
+            "updated_at=excluded.updated_at",
+            (assignment, student_key, stage, status, detail[:2000], category, _now()),
         )
         self.db.commit()
 
@@ -150,6 +160,43 @@ class State:
 
     def stage_done(self, assignment: str, student_key: str, stage: str) -> bool:
         return self.stage_status(assignment, student_key, stage) == "done"
+
+    def first_failed_stage(self, assignment: str, student_key: str,
+                           stages: Iterable[str] | None = None) -> tuple[str, str] | None:
+        """Return the first failed stage and its detail in pipeline order."""
+        order = list(stages or ("pull", "unpack", "provision", "grade"))
+        for stage in order:
+            row = self.db.execute(
+                "SELECT status, detail FROM stages "
+                "WHERE assignment=? AND student_key=? AND stage=?",
+                (assignment, student_key, stage),
+            ).fetchone()
+            if row and row["status"] == "failed":
+                return stage, str(row["detail"] or "")
+        return None
+
+    def _first_error(self, assignment: str, student_key: str, error_kind: str,
+                     stages: Iterable[str] | None = None) -> tuple[str, str] | None:
+        order = list(stages or ("pull", "unpack", "provision", "grade"))
+        for stage in order:
+            row = self.db.execute(
+                "SELECT status, detail, error_kind FROM stages "
+                "WHERE assignment=? AND student_key=? AND stage=?",
+                (assignment, student_key, stage),
+            ).fetchone()
+            if row and row["status"] == "failed" and row["error_kind"] == error_kind:
+                return stage, str(row["detail"] or "")
+        return None
+
+    def first_student_error(self, assignment: str, student_key: str,
+                            stages: Iterable[str] | None = None) -> tuple[str, str] | None:
+        """Return the first student-caused failed stage in pipeline order."""
+        return self._first_error(assignment, student_key, "student", stages)
+
+    def first_system_error(self, assignment: str, student_key: str,
+                           stages: Iterable[str] | None = None) -> tuple[str, str] | None:
+        """Return the first system-caused failed stage in pipeline order."""
+        return self._first_error(assignment, student_key, "system", stages)
 
     def stages(self, assignment: str) -> list[dict]:
         rows = self.db.execute(
