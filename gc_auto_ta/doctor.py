@@ -36,6 +36,11 @@ def check_config(cfg) -> list[str]:
         files = cfg.grading_files()
         out.append(_line("评分文件", OK if files else FAIL,
                          ", ".join(sorted(files)) if files else "空（grading.files / files_dir 都没填）"))
+        if files:
+            from .validate import validate_grading_files
+            problems = validate_grading_files(files)
+            out.append(_line("评分规范", FAIL if problems else OK,
+                             "；".join(problems) if problems else "JOJ3 配置结构通过"))
     except Exception as exc:
         out.append(_line("评分文件", FAIL, str(exc)))
     out.append(_line("Canvas 目标", OK,

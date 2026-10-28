@@ -10,6 +10,7 @@ joj3_result 解析 → 分数换算与迟交扣分 → 状态库读写。
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -101,6 +102,54 @@ paths:
             ok, doc = False, exc
         check(f"模板 {tpl} 渲染为合法 YAML", ok, str(doc)[:120])
     return cfg
+
+
+def test_validate() -> None:
+    print("[validate] JOJ3 配置结构")
+    from gc_auto_ta.validate import validate_grading_files
+
+    def conf(stage: dict) -> dict[str, str]:
+        return {"joj/lab3/conf.json": json.dumps(
+            {"name": "lab3", "stages": [stage]}, ensure_ascii=False)}
+
+    def stage(**executor_extra) -> dict:
+        executor = {"name": "sandbox", "with": {"default": {
+            "args": ["gcc", "-o", "t1", "Lab3Task1.c"],
+            "env": ["PATH=/usr/bin:/bin:/usr/local/bin"],
+        }}}
+        executor.update(executor_extra)
+        return {"name": "build", "executor": executor}
+
+    check("合规配置通过", validate_grading_files(conf(stage())) == [])
+
+    # 本次 lab3 事故的原始形状：命令写在 executor 顶层（被 JOJ3 忽略），
+    # with.default.args 只剩一个 PATH=... 环境变量
+    broken = stage(args=["bash", "-c", "gcc -o t1 Lab3Task1.c"])
+    broken["executor"]["with"]["default"]["args"] = ["PATH=/usr/bin:/bin:/usr/local/bin"]
+    problems = validate_grading_files(conf(broken))
+    check("executor 顶层 args 被报出",
+          any("executor 只允许" in p and "'args'" in p for p in problems), str(problems))
+    check("PATH=... 当命令被报出",
+          any("env" in p and "可执行文件" in p for p in problems), str(problems))
+
+    empty = stage()
+    empty["executor"]["with"]["default"]["args"] = []
+    check("空 args 被报出",
+          any("非空字符串列表" in p for p in validate_grading_files(conf(empty))))
+
+    cases = stage()
+    cases["executor"]["with"]["cases"] = [{"args": ["PATH=/bin", "./t1"]}]
+    check("cases 覆盖里的 env 写法被报出",
+          any("cases[0].args[0]" in p for p in validate_grading_files(conf(cases))))
+
+    bad_json = {"joj/conf.json": "{not json"}
+    check("非法 JSON 被报出",
+          any("不是合法 JSON" in p for p in validate_grading_files(bad_json)))
+
+    ignored = {"joj/notes.json": "{not json", "joj/conf.json": json.dumps(
+        {"stages": [{"name": "s", "executor": {"name": "sandbox", "with": {
+            "default": {"args": ["/bin/true"]}}}}]})}
+    check("非 conf 的 json 不参与校验", validate_grading_files(ignored) == [])
 
 
 def test_naming() -> None:
@@ -208,6 +257,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gc-auto-ta-smoke-") as tmpdir:
         tmp = Path(tmpdir)
         cfg = test_config(tmp)
+        test_validate()
         test_naming()
         test_unpack(tmp)
         test_grading_parse()

@@ -71,6 +71,7 @@ python3 -m gc_auto_ta run -c config.yaml [--live] [--dry-run] [--limit N] [--onl
 | 建仓 403 | PAT 缺 `write:organization` | 重新生成 PAT 并勾上 |
 | Actions 一直 waiting、任务列表为空 | 该组织没有 runner | 让运维为该组织注册 runner；Gitea 1.23 不支持实例级 runner（必须一个组织一个 runner） |
 | `Executor Status: Internal Error` | `conf.json` 缺 `procLimit/cpuLimit/clockLimit/memoryLimit/stdin` | 补齐字段（JOJ3 指南第 3 章） |
+| 日志 `parser force quit` → `stage force quit`，结果里 `Internal Error` + `Time: 0 ms` + 空 stderr | 命令写在了 `executor` 顶层（JOJ3 静默忽略），`with.default.args` 只剩下 `PATH=...` 之类环境变量，沙箱拿它当可执行文件 → `execve: no such file or directory` | 把命令放进 `with.default.args`，把 `KEY=VALUE` 放进 `with.default.env`；新的 `provision` 会在推送前拦下（见 docs/02「推送前的结构校验」） |
 | 沙箱找不到 `joj/run_tests.m` | `conf.json` 用了容器路径 | `copyInDir: "."` + 仓库相对路径 |
 | 全班 0 分 | 期望文件与学生输出真的不同；或 `copyOut` 未包含被比较的文件名；或 `max_score` 与 conf.json 分数之和不一致 | 本地先跑一遍 `octave-cli joj/run_tests.m` 对比；多组数据见 `docs/09-multiple-test-cases.md` |
 | 收分时 `看不到 score-*.json` | workflow 没 push 回分数（缺 secret / 模板不匹配） | 用 `publish: file` 的 secret 模板；确认 `score_file_pattern` 与模板一致 |

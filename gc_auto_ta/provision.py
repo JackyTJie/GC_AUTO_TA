@@ -67,6 +67,7 @@ def build_workspace(cfg, repo: str, student_key: str, source_files: Iterable[Pat
                     dest: Path) -> Path:
     """把评分文件 + 学生源码 + workflow 组装到 dest（已存在则清空重建）。"""
     from .unpack import copy_student_files
+    from .validate import ensure_grading_files
     from .workflow import build_workflow
 
     dest = Path(dest)
@@ -78,6 +79,7 @@ def build_workspace(cfg, repo: str, student_key: str, source_files: Iterable[Pat
     files = cfg.grading_files()
     if not files:
         raise RuntimeError("配置里没有任何评分文件（grading.files / grading.files_dir）")
+    ensure_grading_files(files)
     for rel, content in files.items():
         write_text(dest / rel, content if content.endswith("\n") else content + "\n")
     write_json(dest / "_gc_auto_ta.json", {
@@ -110,6 +112,8 @@ def build_config_repo_workspace(cfg, dest: Path) -> Path:
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     files = cfg.grading_files()
+    from .validate import ensure_grading_files
+    ensure_grading_files(files)
     for rel, content in files.items():
         write_text(dest / rel, content if content.endswith("\n") else content + "\n")
     write_text(dest / "README.md",

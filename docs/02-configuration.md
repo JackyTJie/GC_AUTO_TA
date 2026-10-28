@@ -82,6 +82,32 @@ PAT 生成：Gitea → 头像 → Settings → Applications → Generate New Tok
   `grading.files_dir: ./course-conf/hw1`，目录内容（含子目录）原样进入仓库。
 * 内联里若把 `conf.json` 写成 YAML 映射（而不是字符串），程序会序列化成 JSON 写入仓库——两种写法都行。
 
+### 推送前的结构校验
+
+`doctor` 和 `provision` 会校验所有文件名以 `conf` 开头、以 `.json` 结尾的评分文件
+（`conf.json` / `conf-release.json`）。`provision` 发现问题直接拒绝推送，
+`doctor` 则把问题逐条列在「评分规范」一行。规则（`gc_auto_ta/validate.py`）：
+
+* `executor` 只允许 `name` / `with`——JOJ3 会**静默忽略**其它字段，写到别处的命令等于没写；
+* `with.default.args` 必须是非空字符串列表；
+* `args[0]` 不能是 `KEY=VALUE`，那是 `env` 的写法，JOJ3 会拿它当可执行文件名，
+  沙箱只会回 `Internal Error` + `Time: 0 ms`，`result-status` 再直接 `force quit`；
+* `with.cases[*].args` 若填写，同样不能以 `KEY=VALUE` 开头。
+
+正确形状：
+
+```yaml
+joj/conf.json:
+  stages:
+    - name: build
+      executor:
+        name: sandbox
+        with:
+          default:
+            args: ["gcc", "-o", "t1", "Lab3Task1.c"]
+            env: ["PATH=/usr/bin:/bin:/usr/local/bin"]
+```
+
 ### workflow 模板自动选择表
 
 | layout | publish | 模板 | 说明 |
