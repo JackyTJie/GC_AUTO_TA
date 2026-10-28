@@ -292,6 +292,40 @@ def test_grade_skips_provision_failures(tmp: Path) -> None:
         check("评分阶段记录 skipped", state.stage_status("hw1", "failed", "grade") == "skipped")
 
 
+def test_grade_failure_skips_issue_wait(tmp: Path) -> None:
+    print("[grading] task failure skips issue publication wait")
+    import gc_auto_ta.grading as grading
+    from gc_auto_ta.state import State
+
+    class FakeGitea:
+        def wait_task(self, *args, **kwargs):
+            return {"id": 7, "status": "failure", "run_number": 3}
+
+    waits: list[float] = []
+    original_collect = grading.collect_score
+
+    def collect_score(*args, **kwargs):
+        waits.append(kwargs["issue_wait"])
+        return {"score": None, "comment": "", "stages": [], "source": ""}
+
+    grading.collect_score = collect_score
+    try:
+        cfg = SimpleNamespace(
+            assignment_name="hw1", org="JOJ", publish="issue", default_branch="main",
+            grading_timeout=1, poll_interval=0,
+        )
+        with State(tmp / "grading-failure-state.sqlite3") as state:
+            state.upsert_student("hw1", "student", canvas_user_id=1, repo="hw1-student")
+            state.set_stage("hw1", "student", "provision", "done")
+            state.add_run("hw1", "student", "hw1-student", "abcdef123456")
+
+            grading.grade_all(cfg, FakeGitea(), state)
+
+        check("失败任务不等待 issue", waits == [0.0], str(waits))
+    finally:
+        grading.collect_score = original_collect
+
+
 def test_gitea_issue_filter() -> None:
     print("[gitea] issue 与 pull request 过滤")
     from gc_auto_ta.gitea_api import GiteaClient
@@ -688,6 +722,7 @@ def main() -> int:
         test_grading_parse()
         test_provision_cleans_readonly_workspace(tmp)
         test_grade_skips_provision_failures(tmp)
+        test_grade_failure_skips_issue_wait(tmp)
         test_gitea_issue_filter()
         test_gitea_repo_cleanup()
         test_writeback(cfg)

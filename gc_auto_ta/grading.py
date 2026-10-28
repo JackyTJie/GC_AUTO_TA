@@ -221,7 +221,14 @@ def grade_all(cfg, gitea, state, keys: list[str] | None = None,
                     state.update_run(int(run["id"]), task_id=task.get("id"),
                                      task_status=info["task_status"],
                                      run_number=task.get("run_number"))
-                collected = collect_score(cfg, gitea, repo, sha, key)
+                # A failed task will not publish a grading issue.  Do one
+                # immediate collection attempt, but do not wait the full
+                # issue publication window.
+                task_status = info["task_status"].lower()
+                issue_wait = 0.0 if task_status in {
+                    "failure", "failed", "cancelled", "error", "skipped"
+                } else 120.0
+                collected = collect_score(cfg, gitea, repo, sha, key, issue_wait=issue_wait)
                 info.update({k: collected[k] for k in ("score", "comment", "source")})
                 state.save_score(cfg.assignment_name, key,
                                  score=collected.get("score"),
