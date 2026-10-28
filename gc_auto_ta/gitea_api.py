@@ -4,6 +4,7 @@
     GET    /api/v1/version
     GET    /api/v1/orgs/{org}
     POST   /api/v1/orgs/{org}/repos                 建仓
+    GET    /api/v1/orgs/{org}/repos                 列出组织仓库
     GET    /api/v1/repos/{owner}/{repo}
     PATCH  /api/v1/repos/{owner}/{repo}             改默认分支等
     GET    /api/v1/orgs/{org}/teams
@@ -107,6 +108,20 @@ class GiteaClient:
     def get_repo(self, owner: str, repo: str) -> dict | None:
         return self.request("GET", f"/repos/{owner}/{repo}", raise_on_error=False,
                             ok_statuses=(200,))
+
+    def list_repos(self, org: str, limit: int = 50) -> list[dict]:
+        repos: list[dict] = []
+        page = 1
+        while True:
+            batch = self.request("GET", f"/orgs/{org}/repos",
+                                 params={"limit": limit, "page": page}) or []
+            if not isinstance(batch, list):
+                break
+            repos.extend(batch)
+            if len(batch) < limit:
+                break
+            page += 1
+        return repos
 
     def create_repo(self, org: str, name: str, private: bool = True, auto_init: bool = False,
                     default_branch: str = "main", description: str = "") -> dict:

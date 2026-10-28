@@ -42,6 +42,7 @@ DEFAULTS: dict[str, Any] = {
         "org": "JOJ",
         # 组织可见性要如实填：私有组织下的「公开仓库」匿名一样读不到（Gitea 按 owner 可见性拦截）
         "org_private": False,
+        "delete_repos_before_setup": False,
         "min_interval": 0.05,
     },
     "assignment": {
@@ -253,6 +254,10 @@ class Config:
     @property
     def org_private(self) -> bool:
         return bool(self.get("gitea.org_private"))
+
+    @property
+    def delete_repos_before_setup(self) -> bool:
+        return bool(self.get("gitea.delete_repos_before_setup"))
 
     # ------------------------------------------------------------------ 作业
     @property

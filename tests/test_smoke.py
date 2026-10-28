@@ -306,6 +306,35 @@ def test_gitea_issue_filter() -> None:
           str(issues))
 
 
+def test_gitea_repo_cleanup() -> None:
+    print("[gitea] 组织仓库清理")
+    from gc_auto_ta.gitea_api import GiteaClient
+    from gc_auto_ta.provision import _delete_org_repositories
+
+    client = GiteaClient.__new__(GiteaClient)
+    calls: list[tuple[str, dict]] = []
+
+    def request(method, path, **kwargs):
+        calls.append((path, kwargs))
+        page = kwargs.get("params", {}).get("page")
+        if page == 1:
+            return [{"name": "old-1"}]
+        if page == 2:
+            return [{"name": "old-2"}]
+        return []
+
+    client.request = request
+    repos = client.list_repos("org", limit=1)
+    check("组织仓库列表支持分页", [r["name"] for r in repos] == ["old-1", "old-2"])
+
+    deleted: list[str] = []
+    client.list_repos = lambda org: [{"name": "old-1"}, {"name": "old-2"}]
+    client.delete_repo = lambda org, repo: deleted.append(repo)
+    cfg = SimpleNamespace(org="org")
+    check("清理组织内全部仓库", _delete_org_repositories(cfg, client) == 2 and
+          deleted == ["old-1", "old-2"], str(deleted))
+
+
 def test_writeback(cfg) -> None:
     print("[writeback] 分数换算与迟交扣分")
     from gc_auto_ta.writeback import compute_grade, build_comment, late_days
@@ -660,6 +689,7 @@ def main() -> int:
         test_provision_cleans_readonly_workspace(tmp)
         test_grade_skips_provision_failures(tmp)
         test_gitea_issue_filter()
+        test_gitea_repo_cleanup()
         test_writeback(cfg)
         test_writeback_provision_failure_gets_zero(cfg, tmp)
         test_writeback_provision_failure_dry_does_not_submit(cfg, tmp)

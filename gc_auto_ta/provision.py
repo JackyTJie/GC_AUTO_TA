@@ -208,6 +208,23 @@ def rerun(cfg, repo: str, student_key: str, work_root: Path) -> str:
     return sha
 
 
+def _delete_org_repositories(cfg, gitea) -> int:
+    repos = gitea.list_repos(cfg.org)
+    errors: list[str] = []
+    for repo in repos:
+        name = str(repo.get("name") or "")
+        if name:
+            log().warning("删除组织仓库：%s/%s", cfg.org, name)
+            try:
+                gitea.delete_repo(cfg.org, name)
+            except Exception as exc:
+                errors.append(f"{name}: {exc}")
+                log().error("删除组织仓库失败 %s/%s：%s", cfg.org, name, exc)
+    if errors:
+        raise RuntimeError("部分组织仓库删除失败；已继续尝试其余仓库：" + "; ".join(errors))
+    return len([repo for repo in repos if repo.get("name")])
+
+
 # --------------------------------------------------------------------------- 主流程
 def provision_all(cfg, gitea, state, students_with_files: dict, dry_run: bool = False) -> dict:
     """给每个学生建仓 + 推送。students_with_files: {student_key: {"student": Student, "files": [Path]}}
@@ -219,6 +236,19 @@ def provision_all(cfg, gitea, state, students_with_files: dict, dry_run: bool = 
     out: dict[str, dict] = {}
     work = cfg.assignment_work_dir / "workspaces"
     work.mkdir(parents=True, exist_ok=True)
+
+    if cfg.delete_repos_before_setup and not dry_run:
+        try:
+            deleted = _delete_org_repositories(cfg, gitea)
+            log().warning("已删除组织 %s 的 %d 个仓库", cfg.org, deleted)
+        except Exception as exc:
+            detail = f"清理组织仓库失败：{exc}"
+            log().error(detail)
+            for key, item in students_with_files.items():
+                repo = repo_name(cfg.repo_prefix, key)
+                state.set_stage(cfg.assignment_name, key, "provision", "failed", detail, "system")
+                out[key] = {"repo": repo, "sha": "", "error": detail, "status": "failed"}
+            return out
 
     # layout=config_repo：先把评分文件推到一个 TA 私有仓库
     if cfg.layout == "config_repo" and not dry_run:

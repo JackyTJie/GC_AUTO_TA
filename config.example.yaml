@@ -29,6 +29,7 @@ gitea:
   org: JOJ                                  # 仓库建在哪个组织（该组织必须有 runner）
   org_private: false                        # 组织是否私有。私有组织下连「公开仓库」匿名都读不到，
                                             # 自动选择模板时会按这个值分流到带 token 的 clone 模板
+  delete_repos_before_setup: false          # provision 前删除组织内全部仓库（危险操作）
   min_interval: 0.05
 
 # ---------------------------------------------------------------- 3. 作业 / 仓库

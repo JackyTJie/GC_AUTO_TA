@@ -43,6 +43,7 @@ Token 生成：Canvas → 头像 → Settings → **Approved Integrations** → 
 | `token` | ✅ | PAT，scope：`write:repository` + `write:organization` + `read:user`（要开 issue 再加 `write:issue`） |
 | `owner` | ✅ | PAT 所属用户名。私有仓库 clone 时作为 basic auth 用户名写进 workflow |
 | `org` | ✅ | 仓库建在哪个组织。**该组织必须有 runner**，否则 workflow 静默等待 |
+| `delete_repos_before_setup` | `false` | provision 开始前删除该组织内全部仓库；危险操作 |
 | `min_interval` | | 请求最小间隔，默认 0.05 |
 
 PAT 生成：Gitea → 头像 → Settings → Applications → Generate New Token。只放本机（配置文件或环境变量）。
