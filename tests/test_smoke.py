@@ -154,6 +154,78 @@ def test_reset_unpacked(tmp: Path) -> None:
           str(list(unpacked.rglob("*"))))
 
 
+def test_attachment_download_timeout(tmp: Path) -> None:
+    print("[canvas] 单附件下载超时参数")
+    from gc_auto_ta.canvas_api import CanvasGateway
+
+    class Response:
+        content = b"submission"
+
+    class Session:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+            self.failures = 0
+
+        def get(self, *args, **kwargs):
+            self.calls.append(kwargs)
+            if self.failures:
+                self.failures -= 1
+                raise TimeoutError("attachment timed out")
+            return Response()
+
+    class Requester:
+        def __init__(self, session: Session) -> None:
+            self._session = session
+
+        def _get_request(self, url, headers, params=None, **kwargs):
+            return self._session.get(url, headers=headers, params=params)
+
+        def request(self, method, _url=None):
+            return self._get_request(_url, headers={}, params=None)
+
+    class Attachment:
+        def __init__(self, requester: Requester) -> None:
+            self._requester = requester
+
+        def download(self, location: str) -> None:
+            response = self._requester.request("GET", _url="https://canvas.test/file")
+            Path(location).write_bytes(response.content)
+
+    session = Session()
+    requester = Requester(session)
+    attachment = Attachment(requester)
+    gateway = CanvasGateway.__new__(CanvasGateway)
+    gateway.attachment_download_timeout = 7.5
+    gateway.limiter = SimpleNamespace(wait=lambda: None)
+    target = tmp / "submission.bin"
+
+    original_get_request = requester._get_request
+    gateway._download_attachment(attachment, target)
+    check("附件请求收到超时", session.calls == [{"headers": {}, "params": None, "timeout": 7.5}],
+          str(session.calls))
+    check("附件内容写入", target.read_bytes() == b"submission")
+    check("超时包装在下载后恢复", requester._get_request == original_get_request)
+
+    session.calls.clear()
+    session.failures = 2
+    attachment.display_name = "retried.bin"
+    import gc_auto_ta.util as util
+    old_sleep = util.time.sleep
+    try:
+        util.time.sleep = lambda _seconds: None
+        result = gateway.download(SimpleNamespace(
+            submission_type="online_upload", attachments=[attachment], user_id=42,
+            submitted_at=None, attempt=1, late=False, score=None, grade=None,
+            workflow_state="submitted",
+        ), tmp / "retry-root", "student-42")
+    finally:
+        util.time.sleep = old_sleep
+    check("超时继续使用原三次重试", len(session.calls) == 3, str(len(session.calls)))
+    check("每次重试都应用附件超时",
+          all(call.get("timeout") == 7.5 for call in session.calls), str(session.calls))
+    check("重试成功后附件落盘", result.files[0].read_bytes() == b"submission")
+
+
 def test_unpack(tmp: Path) -> None:
     print("[unpack] zip / 套一层目录 / 全班级大包")
     from gc_auto_ta.unpack import bundle_directories, extract, gather_source_files, split_bundle
@@ -717,6 +789,7 @@ def main() -> int:
         test_naming()
         test_reset_submissions(tmp)
         test_reset_unpacked(tmp)
+        test_attachment_download_timeout(tmp)
         test_unpack(tmp)
         test_unpack_is_idempotent(tmp)
         test_grading_parse()

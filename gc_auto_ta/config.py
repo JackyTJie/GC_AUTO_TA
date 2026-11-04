@@ -93,6 +93,7 @@ DEFAULTS: dict[str, Any] = {
         "concurrency": 4,
         "grading_poll_interval": 10,
         "grading_timeout": 1800,
+        "attachment_download_timeout": 5,
         "push_retries": 3,
     },
 }
@@ -463,6 +464,10 @@ class Config:
     @property
     def grading_timeout(self) -> float:
         return float(self.get("limits.grading_timeout") or 1800)
+
+    @property
+    def attachment_download_timeout(self) -> float:
+        return float(self.get("limits.attachment_download_timeout") or 5)
 
     @property
     def gitea_min_interval(self) -> float:

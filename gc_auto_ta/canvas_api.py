@@ -52,7 +52,7 @@ def html_to_text(html: str) -> str:
 
 class CanvasGateway:
     def __init__(self, base_url: str, token: str, course_id: int, assignment_id: int,
-                 min_interval: float = 0.1) -> None:
+                 min_interval: float = 0.1, attachment_download_timeout: float = 5.0) -> None:
         try:
             from canvasapi import Canvas
         except ImportError as exc:  # pragma: no cover
@@ -62,6 +62,7 @@ class CanvasGateway:
         self.course_id = int(course_id)
         self.assignment_id = int(assignment_id)
         self.limiter = RateLimiter(min_interval)
+        self.attachment_download_timeout = float(attachment_download_timeout)
         self._course = None
         self._assignment = None
 
@@ -131,7 +132,7 @@ class CanvasGateway:
                     path = dest / str(name)
                     if not path.exists():
                         self.limiter.wait()
-                        retry(lambda a=att, p=path: a.download(str(p)),
+                        retry(lambda a=att, p=path: self._download_attachment(a, p),
                               attempts=3, base=1.5, logger=log())
                     files.append(path)
             elif stype == "online_text_entry":
@@ -174,6 +175,30 @@ class CanvasGateway:
             note=note,
             error_kind=error_kind,
         )
+
+    def _download_attachment(self, attachment: Any, path: Path) -> None:
+        """Download one attachment with a timeout, preserving canvasapi error handling."""
+        requester = getattr(attachment, "_requester", None)
+        session = getattr(requester, "_session", None)
+        if (session is None or not hasattr(session, "get") or
+                not hasattr(requester, "_get_request")):
+            raise RuntimeError("Cannot apply attachment timeout: Canvas requester session unavailable")
+
+        original_get = requester._get_request
+
+        def timed_get(url, headers=None, params=None, **kwargs):
+            return session.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=self.attachment_download_timeout,
+            )
+
+        requester._get_request = timed_get
+        try:
+            attachment.download(str(path))
+        finally:
+            requester._get_request = original_get
 
     # ------------------------------------------------------------ 写回
     def post_grade(self, canvas_user_id: int, posted_grade: str | float,

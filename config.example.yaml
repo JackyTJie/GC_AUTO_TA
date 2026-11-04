@@ -182,4 +182,5 @@ limits:
   concurrency: 4                     # 预留：并行处理数（当前实现按顺序跑，避免压垮 runner）
   grading_poll_interval: 10          # 轮询 Actions 任务的间隔（秒）
   grading_timeout: 1800              # 单个仓库等待评测的最长时间（秒）
+  attachment_download_timeout: 5     # 单个 Canvas 附件下载 HTTP 超时时间（秒）
   push_retries: 3

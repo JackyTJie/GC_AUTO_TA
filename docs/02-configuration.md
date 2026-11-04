@@ -142,6 +142,7 @@ roster:
 | `paths.report_dir` | `reports` | 报告输出（实际写 `<report_dir>/<作业>/`） |
 | `limits.grading_poll_interval` | `10` | 轮询 Actions 任务间隔（秒） |
 | `limits.grading_timeout` | `1800` | 单仓库等待评测最长时间（秒） |
+| `limits.attachment_download_timeout` | `120` | 单个 Canvas 附件下载 HTTP 超时时间（秒） |
 | `limits.concurrency` | `4` | 预留（当前实现顺序执行，避免压垮 runner） |
 
 ## 密钥安全建议

@@ -84,7 +84,8 @@ def pull(cfg, limit: int | None = None, only: list[str] | None = None) -> dict:
     """拉取 Canvas 提交并下载到 work/<作业>/submissions/<学生>/。"""
     gw = CanvasGateway(cfg.canvas_base_url, cfg.canvas_token,
                        cfg.canvas_course_id, cfg.canvas_assignment_id,
-                       min_interval=cfg.canvas_min_interval)
+                       min_interval=cfg.canvas_min_interval,
+                       attachment_download_timeout=cfg.attachment_download_timeout)
     props = gw.assignment_props()
     log().info("作业：%s（满分 %s，类型 %s，匿名批改=%s）",
                props["name"], props["points_possible"], props["grading_type"],
