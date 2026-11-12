@@ -1,3 +1,15 @@
+/*
+!/docs/
+!/gc_auto_ta/
+!/scripts/
+!/templates/
+!/tests/
+!/.gitignore
+!/config.example.yaml
+!/Makefile
+!/README.md
+!/requirements.txt
+
 # 密钥与本地状态，绝不入库
 .env
 config.yaml
