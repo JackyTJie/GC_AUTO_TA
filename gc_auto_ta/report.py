@@ -11,9 +11,13 @@ from pathlib import Path
 from .util import human_bytes, log, write_json, write_text
 
 
-def build_rows(cfg, state) -> list[dict]:
+def build_rows(cfg, state, variant: str | None = None) -> list[dict]:
     students = {s["student_key"]: s for s in state.students(cfg.assignment_name)}
-    scores = {s["student_key"]: s for s in state.scores(cfg.assignment_name)}
+    if variant is None:
+        scores = {s["student_key"]: s for s in state.scores(cfg.assignment_name)}
+    else:
+        scores = {s["student_key"]: s for s in state.score_variants(cfg.assignment_name)
+                  if s.get("variant") == variant}
     writes = {w["student_key"]: w for w in state.writebacks(cfg.assignment_name)}
 
     rows: list[dict] = []
@@ -92,7 +96,41 @@ def write_reports(cfg, rows: list[dict]) -> dict[str, Path]:
     md_path = write_text(out_dir / "problems.md", "\n".join(lines) + "\n")
 
     log().info("报告已写出：%s / %s / %s", json_path.name, csv_path.name, md_path.name)
-    return {"json": json_path, "csv": csv_path, "markdown": md_path}
+    paths = {"json": json_path, "csv": csv_path, "markdown": md_path}
+    variants = cfg.grading_variants()
+    if len(variants) > 1:
+        for variant_cfg in variants:
+            suffix = str(variant_cfg.variant_suffix)
+            if not suffix:
+                continue
+            variant_rows = [dict(r) for r in rows]
+            variant_scores = {s["student_key"]: s for s in getattr(cfg, "_report_state", {}).get(suffix, [])}
+            if variant_scores:
+                for row in variant_rows:
+                    score = variant_scores.get(row["student_key"])
+                    if score:
+                        row["raw_score"] = score.get("score")
+                        row["comment"] = score.get("comment") or ""
+            variant_payload = {"assignment": cfg.assignment_name,
+                               "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                               "summary": summarize(variant_rows), "rows": variant_rows}
+            paths[f"json:{suffix}"] = write_json(out_dir / f"results-{suffix}.json", variant_payload)
+            with (out_dir / f"results-{suffix}.csv").open("w", newline="", encoding="utf-8-sig") as fh:
+                writer = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(variant_rows)
+            paths[f"csv:{suffix}"] = out_dir / f"results-{suffix}.csv"
+            variant_problems = [r for r in variant_rows if r["raw_score"] is None]
+            variant_lines = [f"# {cfg.assignment_name} ({suffix}) 需要人工处理的学生", ""]
+            if variant_problems:
+                variant_lines += ["| 学号/标识 | 姓名 | 仓库 | 问题 |", "|---|---|---|---|"]
+                variant_lines += [f"| {r['student_key']} | {r['name']} | {r['repo']} | 没有拿到分数 |"
+                                  for r in variant_problems]
+            else:
+                variant_lines.append("全部学生都拿到了分数。")
+            paths[f"markdown:{suffix}"] = write_text(out_dir / f"problems-{suffix}.md",
+                                                       "\n".join(variant_lines) + "\n")
+    return paths
 
 
 def print_table(rows: list[dict], limit: int | None = None) -> None:

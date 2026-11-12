@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,8 @@ DEFAULTS: dict[str, Any] = {
         "config_repo": None,          # layout=config_repo 时，评分文件所在的 TA 私有仓库名
         "commit_prefix": "feat",      # 提交信息：feat(<作业>): <学生> submission [<作业>]
         "score_file_pattern": "score-{sha7}.json",
+        "variants": [],              # optional repeated grading passes
+        "aggregate": "max",         # max | min
     },
     "unpack": {
         "student_file_globs": ["*.m", "*.cpp", "*.cc", "*.c", "*.h", "*.hpp", "*.py",
@@ -154,6 +157,7 @@ class Config:
     path: Path
     project_root: Path
     raw: dict = field(default_factory=dict)
+    variant_suffix: str = ""
 
     # ------------------------------------------------------------------ 构造
     @classmethod
@@ -301,6 +305,54 @@ class Config:
     @property
     def max_score(self) -> float:
         return float(self.get("grading.max_score") or 100)
+
+    @property
+    def aggregate_method(self) -> str:
+        value = str(self.get("grading.aggregate", self.get("grading.aggregation",
+                         self.get("grading.aggregation_method", "max"))) or "max").lower()
+        if value not in {"max", "min"}:
+            raise ValueError("grading.aggregate 必须是 max 或 min")
+        return value
+
+    def grading_variants(self) -> list["Config"]:
+        """Return base/overlaid grading configurations for repeated grading."""
+        entries = (self.get("grading.variants") or self.get("grading.config_sets")
+                   or self.get("grading.configs"))
+        if not entries:
+            return [self]
+        if not isinstance(entries, list):
+            raise ValueError("grading.variants 必须是数组")
+        result: list[Config] = []
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise ValueError(f"grading.variants[{index}] 必须是映射")
+            suffix = str(entry.get("suffix") or entry.get("report_suffix")
+                         or entry.get("name") or index + 1).strip()
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", suffix):
+                raise ValueError(f"grading.variants[{index}] suffix 只能包含字母、数字、_、-")
+            nested = entry.get("grading")
+            overlay = dict(nested) if isinstance(nested, dict) else {
+                k: v for k, v in entry.items() if k not in {"suffix", "name"}
+            }
+            raw = deepcopy(self.raw)
+            raw["grading"] = _deep_merge(dict(raw.get("grading") or {}), overlay)
+            if "files_dir" in overlay and "files" not in overlay:
+                raw["grading"]["files"] = {}
+            for key in ("variants", "config_sets", "configs"):
+                raw["grading"].pop(key, None)
+            result.append(Config(path=self.path, project_root=self.project_root,
+                                 raw=raw, variant_suffix=suffix))
+        return result
+
+    def with_grading_override(self, overlay: dict, suffix: str = "") -> "Config":
+        raw = deepcopy(self.raw)
+        raw["grading"] = _deep_merge(dict(raw.get("grading") or {}), overlay)
+        if "files_dir" in overlay and "files" not in overlay:
+            raw["grading"]["files"] = {}
+        for key in ("variants", "config_sets", "configs"):
+            raw["grading"].pop(key, None)
+        return Config(path=self.path, project_root=self.project_root, raw=raw,
+                      variant_suffix=suffix)
 
     @property
     def config_repo(self) -> str | None:

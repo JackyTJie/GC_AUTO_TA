@@ -226,12 +226,22 @@ def _delete_org_repositories(cfg, gitea) -> int:
 
 
 # --------------------------------------------------------------------------- 主流程
-def provision_all(cfg, gitea, state, students_with_files: dict, dry_run: bool = False) -> dict:
+def provision_all(cfg, gitea, state, students_with_files: dict, dry_run: bool = False,
+                  variant: str | None = None) -> dict:
     """给每个学生建仓 + 推送。students_with_files: {student_key: {"student": Student, "files": [Path]}}
 
     返回 {student_key: {"repo":..., "sha":..., "error":...}}
     """
     from .naming import repo_name
+
+    if variant is None:
+        variants = cfg.grading_variants() if hasattr(cfg, "grading_variants") else [cfg]
+        if len(variants) > 1:
+            combined: dict[str, dict] = {}
+            for variant_cfg in variants:
+                combined = provision_all(variant_cfg, gitea, state, students_with_files,
+                                         dry_run=dry_run, variant=variant_cfg.variant_suffix)
+            return combined
 
     out: dict[str, dict] = {}
     work = cfg.assignment_work_dir / "workspaces"
@@ -298,7 +308,7 @@ def provision_all(cfg, gitea, state, students_with_files: dict, dry_run: bool = 
                     gitea.set_default_branch(cfg.org, repo, cfg.default_branch)
                 except Exception as exc:
                     log().debug("设置默认分支失败（可忽略）：%s", exc)
-                state.add_run(cfg.assignment_name, key, repo, info["sha"])
+                state.add_run(cfg.assignment_name, key, repo, info["sha"], variant or "")
             state.upsert_student(cfg.assignment_name, key,
                                  canvas_user_id=student.canvas_user_id,
                                  login_id=student.login_id, name=student.name,

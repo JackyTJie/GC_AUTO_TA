@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS runs (
     run_number    INTEGER,
     triggered_at  REAL,
     finished_at   REAL
+    ,variant      TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS scores (
@@ -81,6 +82,20 @@ CREATE TABLE IF NOT EXISTS writebacks (
     written_at    REAL,
     PRIMARY KEY (assignment, student_key)
 );
+
+CREATE TABLE IF NOT EXISTS score_variants (
+    assignment   TEXT NOT NULL,
+    student_key  TEXT NOT NULL,
+    variant      TEXT NOT NULL,
+    commit_sha   TEXT,
+    score        REAL,
+    comment      TEXT,
+    stages_json  TEXT,
+    source       TEXT,
+    raw_json     TEXT,
+    collected_at REAL,
+    PRIMARY KEY (assignment, student_key, variant)
+);
 """
 
 
@@ -103,6 +118,9 @@ class State:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(stages)")}
         if "error_kind" not in columns:
             self.db.execute("ALTER TABLE stages ADD COLUMN error_kind TEXT NOT NULL DEFAULT ''")
+        run_columns = {row[1] for row in self.db.execute("PRAGMA table_info(runs)")}
+        if "variant" not in run_columns:
+            self.db.execute("ALTER TABLE runs ADD COLUMN variant TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         self.db.close()
@@ -206,10 +224,10 @@ class State:
 
     # ------------------------------------------------------------ runs
     def add_run(self, assignment: str, student_key: str, repo: str,
-                commit_sha: str | None = None) -> int:
+                commit_sha: str | None = None, variant: str = "") -> int:
         cur = self.db.execute(
-            "INSERT INTO runs (assignment,student_key,repo,commit_sha,triggered_at) VALUES (?,?,?,?,?)",
-            (assignment, student_key, repo, commit_sha, _now()),
+            "INSERT INTO runs (assignment,student_key,repo,commit_sha,triggered_at,variant) VALUES (?,?,?,?,?,?)",
+            (assignment, student_key, repo, commit_sha, _now(), variant),
         )
         self.db.commit()
         return int(cur.lastrowid)
@@ -221,7 +239,13 @@ class State:
         self.db.execute(f"UPDATE runs SET {sets} WHERE id=?", list(fields.values()) + [run_id])
         self.db.commit()
 
-    def last_run(self, assignment: str, student_key: str) -> dict | None:
+    def last_run(self, assignment: str, student_key: str, variant: str | None = None) -> dict | None:
+        if variant is not None:
+            row = self.db.execute(
+                "SELECT * FROM runs WHERE assignment=? AND student_key=? AND variant=? ORDER BY id DESC LIMIT 1",
+                (assignment, student_key, variant),
+            ).fetchone()
+            return dict(row) if row else None
         row = self.db.execute(
             "SELECT * FROM runs WHERE assignment=? AND student_key=? ORDER BY id DESC LIMIT 1",
             (assignment, student_key),
@@ -246,6 +270,25 @@ class State:
         rows = self.db.execute(
             "SELECT * FROM scores WHERE assignment=? ORDER BY student_key", (assignment,)
         ).fetchall()
+        return [dict(r) for r in rows]
+
+    def save_score_variant(self, assignment: str, student_key: str, variant: str,
+                           score: float | None, comment: str = "", stages: str = "",
+                           source: str = "", commit_sha: str = "", raw_json: str = "") -> None:
+        self.db.execute(
+            "INSERT INTO score_variants (assignment,student_key,variant,commit_sha,score,comment,stages_json,source,raw_json,collected_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(assignment,student_key,variant) DO UPDATE SET "
+            "commit_sha=excluded.commit_sha,score=excluded.score,comment=excluded.comment,stages_json=excluded.stages_json,"
+            "source=excluded.source,raw_json=excluded.raw_json,collected_at=excluded.collected_at",
+            (assignment, student_key, variant, commit_sha, score, comment, stages, source, raw_json, _now()),
+        )
+        self.db.commit()
+
+    def score_variants(self, assignment: str, student_key: str | None = None) -> list[dict]:
+        if student_key is None:
+            rows = self.db.execute("SELECT * FROM score_variants WHERE assignment=? ORDER BY student_key,variant", (assignment,)).fetchall()
+        else:
+            rows = self.db.execute("SELECT * FROM score_variants WHERE assignment=? AND student_key=? ORDER BY variant", (assignment, student_key)).fetchall()
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------ writebacks

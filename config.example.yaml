@@ -49,6 +49,16 @@ grading:
   max_score: 100             # JOJ3 侧满分（run_tests.m 里各 parser 分数之和应等于它）
   score_file_pattern: "score-{sha7}.json"   # 与 workflow 模板里的文件名保持一致
   commit_prefix: feat        # 提交信息前缀：feat(hw1): <学生> submission [hw1]
+  aggregate: max              # 多组评分最终取 max 或 min
+
+  # ---- 可选：同一份代码使用多套评分配置重复评测 ----
+  # 每个元素会覆盖 grading 下对应字段；suffix 会自动加到报告文件名。
+  # variants:
+  #   - suffix: public-tests
+  #     files: {joj/conf.json: "..."}
+  #   - suffix: strict-tests
+  #     grading:
+  #       files_dir: ./course-conf/hw1-strict
 
   # ---- 评分样例：内联文本（优先级高于 files_dir）----
   # joj3 -conf-root joj -conf-name conf.json 会读 joj/conf.json，

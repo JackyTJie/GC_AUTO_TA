@@ -75,6 +75,23 @@ PAT 生成：Gitea → 头像 → Settings → Applications → Generate New Tok
 | `files_dir` | | 也可以指向一个目录，内容原样搬进仓库（`files` 优先） |
 | `workflow_template` | 自动 | 留空按 `layout + publish` 自动选（见下表） |
 | `config_repo` | | `layout=config_repo` 时评分文件所在仓库名 |
+| `aggregate` | `max` | 多组评分时最终分数取 `max` 或 `min` |
+| `variants` | `[]` | 可选评分配置数组；每项用 `suffix`/`name` 标识，并覆盖 `grading` 下的字段。也接受 `config_sets` / `configs` 别名 |
+
+例如：
+
+```yaml
+grading:
+  aggregate: min
+  variants:
+    - suffix: normal
+      files_dir: ./course-conf/normal
+    - suffix: strict
+      files_dir: ./course-conf/strict
+      max_score: 100
+```
+
+`provision` 会按数组顺序推送并触发每套评分配置，`grade` 会分别收集结果并按 `aggregate` 选择最终分数。原有的 `reports/<作业>/results.json`、`results.csv` 仍是聚合结果；每个配置额外生成 `results-<suffix>.json` 与 `results-<suffix>.csv`，便于核对。
 
 ### 内联 vs 目录
 

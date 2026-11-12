@@ -129,6 +129,9 @@ def cmd_report(args) -> int:
     cfg = _load_cfg(args)
     with State(cfg.state_db) as state:
         rows = build_rows(cfg, state)
+        cfg._report_state = {}
+        for score in state.score_variants(cfg.assignment_name):
+            cfg._report_state.setdefault(score.get("variant") or "", []).append(score)
     if not rows:
         print("状态库里没有记录：先跑 pull / provision / grade")
         return 1

@@ -179,17 +179,16 @@ def _extract_json_block(text: str) -> Any | None:
 # --------------------------------------------------------------------------- 批量
 def grade_all(cfg, gitea, state, keys: list[str] | None = None,
               wait: bool = True, dry_run: bool = False) -> dict[str, dict]:
-    """对已推送的学生逐个等任务 + 收分数，写入 state。"""
+    """对已推送的学生逐个等任务 + 收分数，并聚合多组评分配置。"""
     out: dict[str, dict] = {}
+    variants = cfg.grading_variants() if hasattr(cfg, "grading_variants") else [cfg]
     rows = state.students(cfg.assignment_name)
     for row in rows:
         key = row["student_key"]
         if keys and key not in keys:
             continue
         repo = row.get("repo")
-        run = state.last_run(cfg.assignment_name, key) or {}
-        sha = run.get("commit_sha") or ""
-        info = {"repo": repo, "sha": sha, "task_status": "", "score": None, "error": ""}
+        info = {"repo": repo, "sha": "", "task_status": "", "score": None, "error": ""}
         failed = state.first_student_error(cfg.assignment_name, key, ("pull", "unpack", "provision"))
         system_error = state.first_system_error(cfg.assignment_name, key, ("pull", "unpack", "provision"))
         if failed or system_error:
@@ -212,34 +211,47 @@ def grade_all(cfg, gitea, state, keys: list[str] | None = None,
             out[key] = info
             continue
         try:
-            if dry_run:
-                info["task_status"] = "dry-run"
-            else:
-                task = wait_run(cfg, gitea, repo, sha) if wait else None
-                if task and run.get("id"):
-                    info["task_status"] = str(task.get("status") or "")
-                    state.update_run(int(run["id"]), task_id=task.get("id"),
-                                     task_status=info["task_status"],
-                                     run_number=task.get("run_number"))
-                # A failed task will not publish a grading issue.  Do one
-                # immediate collection attempt, but do not wait the full
-                # issue publication window.
-                task_status = info["task_status"].lower()
-                issue_wait = 0.0 if task_status in {
-                    "failure", "failed", "cancelled", "error", "skipped"
-                } else 120.0
-                collected = collect_score(cfg, gitea, repo, sha, key, issue_wait=issue_wait)
-                info.update({k: collected[k] for k in ("score", "comment", "source")})
-                state.save_score(cfg.assignment_name, key,
-                                 score=collected.get("score"),
-                                 comment=collected.get("comment", ""),
-                                 stages=json.dumps(collected.get("stages", []), ensure_ascii=False),
-                                 source=collected.get("source", ""),
-                                 commit_sha=sha,
-                                 raw_json=json.dumps(collected, ensure_ascii=False))
-            status = "done" if (dry_run or info["score"] is not None) else "failed"
+            results: list[tuple[str, dict]] = []
+            for variant_cfg in variants:
+                variant = getattr(variant_cfg, "variant_suffix", "")
+                run = state.last_run(cfg.assignment_name, key, variant) or {}
+                sha = run.get("commit_sha") or ""
+                variant_info = {"score": None, "comment": "", "source": "", "stages": []}
+                if dry_run:
+                    variant_info["task_status"] = "dry-run"
+                else:
+                    task = wait_run(variant_cfg, gitea, repo, sha) if wait else None
+                    task_status = str(task.get("status") or "") if task else ""
+                    if task and run.get("id"):
+                        state.update_run(int(run["id"]), task_id=task.get("id"),
+                                         task_status=task_status, run_number=task.get("run_number"))
+                    issue_wait = 0.0 if task_status.lower() in {"failure", "failed", "cancelled", "error", "skipped"} else 120.0
+                    collected = collect_score(variant_cfg, gitea, repo, sha, key, issue_wait=issue_wait)
+                    variant_info.update(collected)
+                    variant_info["commit_sha"] = sha
+                state.save_score_variant(cfg.assignment_name, key, variant,
+                                         score=variant_info.get("score"),
+                                         comment=variant_info.get("comment", ""),
+                                         stages=json.dumps(variant_info.get("stages", []), ensure_ascii=False),
+                                         source=variant_info.get("source", ""), commit_sha=sha,
+                                         raw_json=json.dumps(variant_info, ensure_ascii=False))
+                results.append((variant, variant_info))
+            scored = [(variant, item) for variant, item in results if item.get("score") is not None]
+            if scored:
+                aggregate = cfg.aggregate_method if hasattr(cfg, "aggregate_method") else "max"
+                chosen = (max if aggregate == "max" else min)(scored, key=lambda pair: float(pair[1]["score"]))
+                variant, selected = chosen
+                info.update({k: selected.get(k) for k in ("score", "comment", "source")})
+                info["variant"] = variant
+                info["variants"] = {name: item.get("score") for name, item in results}
+                state.save_score(cfg.assignment_name, key, score=selected.get("score"),
+                                 comment=selected.get("comment", ""),
+                                 stages=json.dumps(selected.get("stages", []), ensure_ascii=False),
+                                 source=selected.get("source", ""), commit_sha=selected.get("commit_sha", ""),
+                                 raw_json=json.dumps({"selected_variant": variant, "variants": results}, ensure_ascii=False, default=str))
+            status = "done" if (dry_run or scored) else "failed"
             state.set_stage(cfg.assignment_name, key, "grade", status,
-                            info.get("error") or f"task={info['task_status']} score={info['score']}")
+                            info.get("error") or f"score={info['score']}")
         except Exception as exc:
             info["error"] = str(exc)
             log().error("学生 %s 收集分数失败：%s", key, exc)
