@@ -111,16 +111,49 @@ def cmd_provision(args) -> int:
 
 def cmd_grade(args) -> int:
     from .gitea_api import GiteaClient
-    from .grading import grade_all
+    from .grading import aggregate_scores, grade_all
     from .state import State
     cfg = _load_cfg(args)
     gitea = GiteaClient(cfg.gitea_url, cfg.gitea_token, min_interval=cfg.gitea_min_interval)
     with State(cfg.state_db) as state:
-        out = grade_all(cfg, gitea, state, keys=_only(args.only),
-                        wait=not args.no_wait, dry_run=args.dry_run)
-    got = len([v for v in out.values() if v.get("score") is not None])
+        variants = cfg.grading_variants()
+        out = {}
+        for variant_cfg in variants:
+            out = grade_all(variant_cfg, gitea, state, keys=_only(args.only),
+                            wait=not args.no_wait, dry_run=args.dry_run)
+        aggregate_scores(cfg, state, keys=_only(args.only))
+        graded = {row["student_key"] for row in state.scores(cfg.assignment_name)
+                  if row.get("score") is not None}
+    got = len(graded)
     print(f"\n收分完成：拿到分数 {got} / {len(out)}")
     return 0 if got else 2
+
+
+def _run_grading_variants(cfg, args) -> dict:
+    """Run provision and grade as one ordered transaction per grading variant."""
+    from .gitea_api import GiteaClient
+    from .grading import aggregate_scores, grade_all
+    from .pipeline import students_with_files
+    from .provision import provision_all
+    from .state import State
+
+    items = students_with_files(cfg)
+    if args.only:
+        keep = set(_only(args.only))
+        items = {k: v for k, v in items.items() if k in keep}
+    if args.limit:
+        items = dict(list(items.items())[: args.limit])
+    gitea = GiteaClient(cfg.gitea_url, cfg.gitea_token, min_interval=cfg.gitea_min_interval)
+    final_out: dict = {}
+    with State(cfg.state_db) as state:
+        for variant_cfg in cfg.grading_variants():
+            log().info("开始评分配置 %s", variant_cfg.variant_suffix)
+            provision_all(variant_cfg, gitea, state, items, dry_run=args.dry_run,
+                          variant=variant_cfg.variant_suffix)
+            final_out = grade_all(variant_cfg, gitea, state, keys=_only(args.only),
+                                  wait=True, dry_run=args.dry_run)
+        aggregate_scores(cfg, state, keys=_only(args.only))
+    return final_out
 
 
 def cmd_report(args) -> int:
@@ -206,7 +239,17 @@ def cmd_run(args) -> int:
     print()
 
     steps = args.stages or ["pull", "unpack", "provision", "grade", "report"]
+    variants = cfg.grading_variants() if hasattr(cfg, "grading_variants") else [cfg]
+    multi_pass = len(variants) > 1
     for step in steps:
+        if step == "provision" and multi_pass and "grade" in steps:
+            print("\n===== provision + grade (per configuration) =====")
+            out = _run_grading_variants(cfg, args)
+            got = len([v for v in out.values() if v.get("score") is not None])
+            if got == 0 and out:
+                print("多组评分均未拿到分数")
+            steps = [s for s in steps if s != "grade"]
+            continue
         print(f"\n===== {step} =====")
         ns = argparse.Namespace(config=args.config, verbose=args.verbose, only=args.only,
                                 limit=args.limit, no_wait=False, dry_run=args.dry_run,

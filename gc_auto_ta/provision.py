@@ -234,15 +234,6 @@ def provision_all(cfg, gitea, state, students_with_files: dict, dry_run: bool = 
     """
     from .naming import repo_name
 
-    if variant is None:
-        variants = cfg.grading_variants() if hasattr(cfg, "grading_variants") else [cfg]
-        if len(variants) > 1:
-            combined: dict[str, dict] = {}
-            for variant_cfg in variants:
-                combined = provision_all(variant_cfg, gitea, state, students_with_files,
-                                         dry_run=dry_run, variant=variant_cfg.variant_suffix)
-            return combined
-
     out: dict[str, dict] = {}
     work = cfg.assignment_work_dir / "workspaces"
     work.mkdir(parents=True, exist_ok=True)

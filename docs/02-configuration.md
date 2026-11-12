@@ -91,7 +91,7 @@ grading:
       max_score: 100
 ```
 
-`provision` 会按数组顺序推送并触发每套评分配置，`grade` 会分别收集结果并按 `aggregate` 选择最终分数。原有的 `reports/<作业>/results.json`、`results.csv` 仍是聚合结果；每个配置额外生成 `results-<suffix>.json` 与 `results-<suffix>.csv`，便于核对。
+完整 `run` 会按数组顺序执行每一套配置的 `provision -> grade`，收分完成后才开始下一套配置；每次 provision 都会清理并重建本地工作区。单独执行 `provision` / `grade` 适合单套配置或补跑。原有的 `reports/<作业>/results.json`、`results.csv` 仍是聚合结果；每个配置额外生成 `results-<suffix>.json` 与 `results-<suffix>.csv`，便于核对。
 
 ### 内联 vs 目录
 
