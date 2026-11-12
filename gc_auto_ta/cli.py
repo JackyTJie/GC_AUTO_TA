@@ -148,6 +148,7 @@ def _run_grading_variants(cfg, args) -> dict:
     from .grading import aggregate_scores, grade_all
     from .pipeline import students_with_files
     from .provision import provision_all
+    from .report import build_rows, write_reports
     from .state import State
 
     items = students_with_files(cfg)
@@ -165,6 +166,9 @@ def _run_grading_variants(cfg, args) -> dict:
                           variant=variant_cfg.variant_suffix)
             final_out = grade_all(variant_cfg, gitea, state, keys=_only(args.only),
                                   wait=True, dry_run=args.dry_run)
+            write_reports(variant_cfg,
+                          build_rows(variant_cfg, state, variant=variant_cfg.variant_suffix),
+                          suffix=variant_cfg.variant_suffix)
         aggregate_scores(cfg, state, keys=_only(args.only))
     return final_out
 
@@ -175,9 +179,6 @@ def cmd_report(args) -> int:
     cfg = _load_cfg(args)
     with State(cfg.state_db) as state:
         rows = build_rows(cfg, state)
-        cfg._report_state = {}
-        for score in state.score_variants(cfg.assignment_name):
-            cfg._report_state.setdefault(score.get("variant") or "", []).append(score)
     if not rows:
         print("状态库里没有记录：先跑 pull / provision / grade")
         return 1
