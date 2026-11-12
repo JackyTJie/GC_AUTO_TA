@@ -92,6 +92,11 @@ def cmd_provision(args) -> int:
     from .provision import provision_all
     from .state import State
     cfg = _load_cfg(args)
+    if len(cfg.grading_variants()) > 1:
+        out = _run_grading_variants(cfg, args)
+        got = len([v for v in out.values() if v.get("score") is not None])
+        print(f"\n多组评分完成：拿到分数 {got} / {len(out)}")
+        return 0 if got else 2
     items = students_with_files(cfg)
     if args.only:
         keep = set(_only(args.only))
@@ -118,7 +123,15 @@ def cmd_grade(args) -> int:
     with State(cfg.state_db) as state:
         variants = cfg.grading_variants()
         out = {}
+        wanted = set(_only(args.only) or [row["student_key"]
+                                          for row in state.students(cfg.assignment_name)])
         for variant_cfg in variants:
+            completed = {row["student_key"] for row in
+                         state.score_variants(cfg.assignment_name)
+                         if row.get("variant") == variant_cfg.variant_suffix
+                         and row.get("score") is not None}
+            if wanted.issubset(completed):
+                continue
             out = grade_all(variant_cfg, gitea, state, keys=_only(args.only),
                             wait=not args.no_wait, dry_run=args.dry_run)
         aggregate_scores(cfg, state, keys=_only(args.only))
@@ -238,17 +251,19 @@ def cmd_run(args) -> int:
     print(cfg.describe())
     print()
 
-    steps = args.stages or ["pull", "unpack", "provision", "grade", "report"]
+    steps = list(args.stages or ["pull", "unpack", "provision", "grade", "report"])
     variants = cfg.grading_variants() if hasattr(cfg, "grading_variants") else [cfg]
     multi_pass = len(variants) > 1
+    run_multi_pass = multi_pass and "provision" in steps and "grade" in steps
+    if run_multi_pass:
+        steps.remove("grade")
     for step in steps:
-        if step == "provision" and multi_pass and "grade" in steps:
+        if step == "provision" and run_multi_pass:
             print("\n===== provision + grade (per configuration) =====")
             out = _run_grading_variants(cfg, args)
             got = len([v for v in out.values() if v.get("score") is not None])
             if got == 0 and out:
                 print("多组评分均未拿到分数")
-            steps = [s for s in steps if s != "grade"]
             continue
         print(f"\n===== {step} =====")
         ns = argparse.Namespace(config=args.config, verbose=args.verbose, only=args.only,
