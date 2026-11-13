@@ -159,6 +159,8 @@ roster:
 | `paths.report_dir` | `reports` | 报告输出（实际写 `<report_dir>/<作业>/`） |
 | `limits.grading_poll_interval` | `10` | 轮询 Actions 任务间隔（秒） |
 | `limits.grading_timeout` | `1800` | 单仓库等待评测最长时间（秒） |
+| `limits.push_timeout` | `120` | provision / rerun 阶段单次 Git push 的最长时间（秒）；必须为正数。超时会将该学生的 provision 标记为失败，并继续处理下一位学生。 |
+| `limits.push_retries` | `3` | Git push 失败或超时后的最大尝试次数。 |
 | `limits.attachment_download_timeout` | `120` | 单个 Canvas 附件下载 HTTP 超时时间（秒） |
 | `limits.concurrency` | `4` | 预留（当前实现顺序执行，避免压垮 runner） |
 

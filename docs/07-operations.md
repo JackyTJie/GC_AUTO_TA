@@ -11,6 +11,13 @@
 | `--org NAME` | 临时覆盖 `gitea.org` |
 | `--course N` / `--assignment N` | 临时覆盖 Canvas 课程/作业 ID |
 
+在 `config.yaml` 的 `logging.level` 中可选 `trace`、`debug`、`info`、`warning`、`error`。
+`logging.file` 默认为 `null`（stderr）；设置为路径（例如 `logs/gc-auto-ta.log`）时，
+所有应用日志改为写入该文件，路径相对于配置文件。设置为 `trace` 时才记录 Canvas HTTP
+响应，使用同一日志输出位置。响应日志包含状态码、响应头和正文；token 会脱敏，
+`Set-Cookie` 不写入。`logging.trace_max_response_bytes` 限制每条响应正文的字节数，
+默认 20000。排查完成后将级别改回 `info`，并妥善保管 trace 文件；正文可能含学生信息。
+
 ### 各子命令
 
 ```bash

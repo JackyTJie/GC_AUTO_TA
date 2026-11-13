@@ -111,6 +111,12 @@ Canvas、Gitea、Actions、runner、网络、权限、配置和本地文件系�
 批量回写只有 Canvas Progress 返回 `completed` 才记录成功；失败、超时或异常会逐学生记录
 writeback 错误。匿名作业无法取得 anonymous id 时不会退回普通学生 submission 接口。
 
+批量请求显式要求 JSON 响应，并校验返回的 Progress 对象。空响应或非 JSON 响应会报告
+HTTP 状态码、Content-Type、响应字节数和重定向次数，不输出响应正文。此时写入结果尚未
+确认，不会自动重发整批请求或转为逐条写入，以免重复评论；应先核对 Canvas 成绩和评论。
+只有明确收到限流拒绝（429）时才自动重试批量 POST。确认需要改走逐条接口后，可使用
+`writeback --live --no-bulk`。
+
 ## 撤销与重写
 
 * 重写：改完配置直接再跑 `writeback --live`（会覆盖分数与新增评论，旧评论仍留在 SpeedGrader 里）

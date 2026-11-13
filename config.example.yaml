@@ -183,6 +183,11 @@ roster: {}
 #      canvas_user_id: 12345
 
 # ---------------------------------------------------------------- 8. 路径与运行参数
+logging:
+  level: info                         # trace | debug | info | warning | error
+  file: null                        # Optional path for all logs, e.g. logs/gc-auto-ta.log
+  trace_max_response_bytes: 20000
+
 paths:
   work_dir: work                     # 中间产物：submissions/ unpacked/ code/ workspaces/
   state_db: state/state.sqlite3      # 状态库（幂等与断点续跑）
@@ -194,3 +199,4 @@ limits:
   grading_timeout: 1800              # 单个仓库等待评测的最长时间（秒）
   attachment_download_timeout: 5     # 单个 Canvas 附件下载 HTTP 超时时间（秒）
   push_retries: 3
+  push_timeout: 120                  # Maximum duration of each git push (seconds)

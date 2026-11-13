@@ -87,6 +87,11 @@ DEFAULTS: dict[str, Any] = {
         "only_grade": False,          # True = 只写分数不写评论
     },
     "roster": {},
+    "logging": {
+        "level": "info",
+        "file": None,
+        "trace_max_response_bytes": 20000,
+    },
     "paths": {
         "work_dir": "work",
         "state_db": "state/state.sqlite3",
@@ -98,6 +103,7 @@ DEFAULTS: dict[str, Any] = {
         "grading_timeout": 1800,
         "attachment_download_timeout": 5,
         "push_retries": 3,
+        "push_timeout": 120,
     },
 }
 
@@ -479,6 +485,19 @@ class Config:
     def only_grade(self) -> bool:
         return bool(self.get("writeback.only_grade"))
 
+    @property
+    def log_level(self) -> str:
+        return str(self.get("logging.level") or "info").lower()
+
+    @property
+    def log_file(self) -> Path | None:
+        value = self.get("logging.file")
+        return self._path("logging.file", "") if value else None
+
+    @property
+    def trace_max_response_bytes(self) -> int:
+        return max(0, int(self.get("logging.trace_max_response_bytes", 20000)))
+
     # ------------------------------------------------------------------ 名单
     @property
     def roster_raw(self) -> dict:
@@ -520,6 +539,20 @@ class Config:
     @property
     def attachment_download_timeout(self) -> float:
         return float(self.get("limits.attachment_download_timeout") or 5)
+
+    @property
+    def push_timeout(self) -> float:
+        value = float(self.get("limits.push_timeout", 120))
+        if not 0 < value < float("inf"):
+            raise ValueError("limits.push_timeout must be a finite positive number of seconds")
+        return value
+
+    @property
+    def push_retries(self) -> int:
+        value = int(self.get("limits.push_retries", 3))
+        if value < 1:
+            raise ValueError("limits.push_retries must be at least 1")
+        return value
 
     @property
     def gitea_min_interval(self) -> float:

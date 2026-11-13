@@ -15,22 +15,80 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 LOG_NAME = "gc_auto_ta"
+HTTP_TRACE_LOG_NAME = "gc_auto_ta.http"
+TRACE_LEVEL = 5
+logging.addLevelName(TRACE_LEVEL, "TRACE")
 
 
 # --------------------------------------------------------------------------- 日志
-def setup_logging(verbose: bool = False) -> None:
-    """初始化 stderr 日志（INFO 或 DEBUG）。"""
+def setup_logging(verbose: bool = False, level: str | None = None,
+                  file: str | Path | None = None,
+                  secrets: Iterable[str] = (), max_response_bytes: int = 20000) -> None:
+    """初始化日志；指定 file 时将所有应用日志输出到该文件。"""
     logger = logging.getLogger(LOG_NAME)
+    for old_handler in logger.handlers:
+        old_handler.close()
     logger.handlers.clear()
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", "%H:%M:%S"))
+    if file:
+        path = Path(file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(path, encoding="utf-8")
+    else:
+        handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s",
+                                          "%Y-%m-%d %H:%M:%S" if file else "%H:%M:%S"))
     logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    selected = (level or ("debug" if verbose else "info")).lower()
+    numeric = {"trace": TRACE_LEVEL, "debug": logging.DEBUG,
+               "info": logging.INFO, "warning": logging.WARNING,
+               "error": logging.ERROR}.get(selected)
+    if numeric is None:
+        raise ValueError(f"未知日志级别：{level}")
+    logger.setLevel(numeric)
     logger.propagate = False
+    trace_logger = logging.getLogger(HTTP_TRACE_LOG_NAME)
+    for old_handler in trace_logger.handlers:
+        old_handler.close()
+    trace_logger.handlers.clear()
+    trace_logger.trace_secrets = tuple(secrets)
+    trace_logger.max_response_bytes = max_response_bytes
+    trace_logger.propagate = True
+    trace_logger.setLevel(TRACE_LEVEL if selected == "trace" else logging.CRITICAL + 1)
 
 
 def log() -> logging.Logger:
     return logging.getLogger(LOG_NAME)
+
+
+def trace_http_response(response: Any, **kwargs) -> Any:
+    """记录脱敏 HTTP 响应；仅 trace 级别启用。"""
+    logger = logging.getLogger(HTTP_TRACE_LOG_NAME)
+    if not logger.isEnabledFor(TRACE_LEVEL) or not logger.hasHandlers():
+        return response
+    max_body = getattr(logger, "max_response_bytes", 20000)
+    body = response.content or b""
+    text = body.decode(response.encoding or "utf-8", "replace")
+    headers = {str(k): str(v) for k, v in response.headers.items()
+               if str(k).lower() not in {"authorization", "set-cookie", "proxy-authenticate"}}
+    payload = {"method": response.request.method, "url": response.url, "status": response.status_code,
+               "reason": response.reason, "headers": headers,
+               "body_bytes": len(body),
+               "body": text}
+    secrets = (*getattr(logger, "trace_secrets", ()),
+               response.request.headers.get("Authorization", "").removeprefix("Bearer "))
+    # Redact before truncation so a token crossing the limit is not partly logged.
+    for secret in secrets:
+        if secret:
+            for key in ("url", "body", "reason"):
+                if payload[key]:
+                    payload[key] = payload[key].replace(str(secret), "<REDACTED>")
+            payload["headers"] = {k: v.replace(str(secret), "<REDACTED>")
+                                  for k, v in payload["headers"].items()}
+    encoded = payload["body"].encode("utf-8")
+    payload["body_truncated"] = len(encoded) > max_body
+    payload["body"] = encoded[:max_body].decode("utf-8", "ignore")
+    logger.log(TRACE_LEVEL, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    return response
 
 
 # --------------------------------------------------------------------------- 文件读写
@@ -173,7 +231,8 @@ def retry(fn, attempts: int = 4, base: float = 1.0, max_sleep: float = 30.0,
 
 # --------------------------------------------------------------------------- 子进程
 def run(cmd: Sequence[str], cwd: str | Path | None = None, env: dict | None = None,
-        check: bool = True, capture: bool = True, stdin_text: str | None = None) -> subprocess.CompletedProcess:
+        check: bool = True, capture: bool = True, stdin_text: str | None = None,
+        timeout: float | None = None) -> subprocess.CompletedProcess:
     """跑一个外部命令；capture=True 时返回带 text stdout/stderr 的结果。"""
     full_env = os.environ.copy()
     if env:
@@ -185,6 +244,7 @@ def run(cmd: Sequence[str], cwd: str | Path | None = None, env: dict | None = No
         input=stdin_text, text=True,
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.PIPE if capture else None,
+        timeout=timeout,
     )
     if check and proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "")[-2000:]

@@ -20,11 +20,12 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Iterable
 
-from .util import log, run, write_json, write_text
+from .util import log, retry, run, write_json, write_text
 
 ASKPASS = """#!/bin/sh
 # git 询问用户名/密码时从这里取值（值来自环境变量，不落盘、不进 argv）
@@ -89,7 +90,17 @@ def git(cfg, args: list[str], cwd: Path, askpass: Path | None = None, check: boo
     cmd += args
     env = askpass_env(cfg.gitea_owner, cfg.gitea_token)
     env["GIT_ASKPASS"] = str(askpass) if askpass else "/bin/true"
-    return run(cmd, cwd=cwd, env=env, check=check)
+    timeout = cfg.push_timeout if args and args[0] == "push" else None
+    try:
+        return run(cmd, cwd=cwd, env=env, check=check, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"git {args[0]} timed out after {timeout:g} seconds") from exc
+
+
+def _push_with_retries(cfg, args: list[str], cwd: Path, askpass: Path) -> None:
+    """Push with bounded retries so transient timeouts do not fail provision immediately."""
+    retry(lambda: git(cfg, args, cwd=cwd, askpass=askpass),
+          attempts=cfg.push_retries, base=1.0, logger=log())
 
 
 # --------------------------------------------------------------------------- 工作区
@@ -176,7 +187,8 @@ def push_workspace(cfg, workspace: Path, repo: str, message: str,
         try:
             git(cfg, ["remote", "add", "origin", url], cwd=workspace, check=False)
             git(cfg, ["remote", "set-url", "origin", url], cwd=workspace)
-            git(cfg, ["push", "-q", "--force", "origin", f"HEAD:refs/heads/{branch}"],
+            _push_with_retries(
+                cfg, ["push", "-q", "--force", "origin", f"HEAD:refs/heads/{branch}"],
                 cwd=workspace, askpass=askpass)
         except RuntimeError as exc:
             hint = ""
@@ -203,7 +215,9 @@ def rerun(cfg, repo: str, student_key: str, work_root: Path) -> str:
                              f"chore({cfg.assignment_name}): rerun {student_key} [{cfg.assignment_name}] [skip ci]"],
                        cwd=ws, check=False)
             sha = git(cfg, ["rev-parse", "HEAD"], cwd=ws).stdout.strip()
-            git(cfg, ["push", "-q", "origin", f"HEAD:{cfg.default_branch}"], cwd=ws, askpass=askpass)
+            _push_with_retries(
+                cfg, ["push", "-q", "origin", f"HEAD:{cfg.default_branch}"],
+                cwd=ws, askpass=askpass)
     log().info("已触发重跑 %s/%s @ %s", cfg.org, repo, sha[:7])
     return sha
 

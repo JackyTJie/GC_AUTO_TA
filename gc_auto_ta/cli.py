@@ -42,7 +42,12 @@ def _load_cfg(args) -> Config:
         overrides.setdefault("writeback", {})["mode"] = "live"
     if getattr(args, "dry_run", False):
         overrides.setdefault("writeback", {})["mode"] = "dry"
-    return Config.load(args.config, overrides=overrides)
+    cfg = Config.load(args.config, overrides=overrides)
+    setup_logging(level=("debug" if getattr(args, "verbose", False)
+                         and cfg.log_level != "trace" else cfg.log_level),
+                  file=cfg.log_file, secrets=cfg.secrets,
+                  max_response_bytes=cfg.trace_max_response_bytes)
+    return cfg
 
 
 # --------------------------------------------------------------------------- 子命令
@@ -196,8 +201,13 @@ def cmd_writeback(args) -> int:
         res = wb_run(cfg, state, live=args.live, only=_only(args.only),
                      bulk=(False if args.no_bulk else None))
     written = len([v for v in res.values() if v.get("posted_grade")])
-    print(f"\n回写完成：{written} 人（mode={cfg.writeback_mode}）")
-    return 0
+    errors = [str(v["error"]) for v in res.values() if v.get("error")]
+    skipped = sum(bool(v.get("skipped")) for v in res.values())
+    print(f"\n回写结束：成功 {written} 人，失败 {len(errors)} 人，跳过 {skipped} 人"
+          f"（mode={cfg.writeback_mode}）")
+    for detail in dict.fromkeys(errors):
+        print(f"失败原因：{detail}")
+    return 1 if errors else 0
 
 
 def cmd_rerun(args) -> int:

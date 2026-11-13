@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from .util import RateLimiter, log, retry, write_json
+from .util import RateLimiter, log, retry, trace_http_response, write_json
 
 SUBMISSION_INCLUDES = [
     "user",
@@ -59,6 +59,7 @@ class CanvasGateway:
             raise RuntimeError("需要 canvasapi：pip install -r requirements.txt") from exc
 
         self.canvas = Canvas(base_url, token)
+        self.canvas._Canvas__requester._session.hooks["response"].append(trace_http_response)
         self.course_id = int(course_id)
         self.assignment_id = int(assignment_id)
         self.limiter = RateLimiter(min_interval)
@@ -245,9 +246,57 @@ class CanvasGateway:
                 log().info("[dry-run][bulk] user=%s grade=%s", uid, g.get("posted_grade"))
             return {"dry_run": True, "count": len(grades)}
 
-        self.limiter.wait()
-        progress = retry(lambda: self.assignment.submissions_bulk_update(grade_data=grades),
-                         attempts=3, base=2.0, logger=log())
+        from canvasapi.exceptions import RateLimitExceeded
+        from canvasapi.progress import Progress
+        from canvasapi.util import combine_kwargs
+        from requests.exceptions import JSONDecodeError
+
+        requester = self.assignment._requester
+        endpoint = (f"courses/{self.course_id}/assignments/{self.assignment_id}"
+                    "/submissions/update_grades")
+
+        def invalid_response(response, reason: str) -> RuntimeError:
+            metadata = "response unavailable"
+            if response is not None:
+                metadata = (f"HTTP {response.status_code}, "
+                            f"Content-Type={response.headers.get('Content-Type', 'missing')}, "
+                            f"{len(response.content or b'')} bytes, "
+                            f"redirects={len(response.history)}")
+            return RuntimeError(
+                f"Canvas bulk POST {endpoint}: {reason} ({metadata}). "
+                "Write outcome is unconfirmed; check Canvas before retrying or using --no-bulk."
+            )
+
+        def submit():
+            self.limiter.wait()
+            cache = getattr(requester, "_cache", [])
+            previous_response = cache[0] if cache else None
+            try:
+                response = requester.request(
+                    "POST", endpoint,
+                    headers={"Accept": "application/json"},
+                    _kwargs=combine_kwargs(grade_data=grades),
+                )
+            except JSONDecodeError as exc:
+                # The SDK also decodes error responses (notably HTTP 401).
+                cache = getattr(requester, "_cache", [])
+                response = cache[0] if cache and cache[0] is not previous_response else None
+                raise invalid_response(response, "non-JSON response") from exc
+            try:
+                data = response.json()
+            except ValueError as exc:
+                raise invalid_response(response, "empty or non-JSON response") from exc
+            if (not 200 <= response.status_code < 300 or not isinstance(data, dict)
+                    or not isinstance(data.get("id"), int) or isinstance(data.get("id"), bool)
+                    or data["id"] <= 0
+                    or data.get("workflow_state") not in ("queued", "running", "completed", "failed")):
+                raise invalid_response(response, "expected a Canvas Progress object")
+            return Progress(requester, data)
+
+        # A missing/invalid response can follow an accepted POST; replaying it
+        # may duplicate comments. Only retry an explicit rate-limit rejection.
+        progress = retry(submit, attempts=3, base=2.0,
+                         exceptions=(RateLimitExceeded,), logger=log())
         deadline = time.monotonic() + poll_timeout
         state = "queued"
         while time.monotonic() < deadline:
