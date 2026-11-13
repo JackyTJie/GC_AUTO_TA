@@ -47,10 +47,10 @@ writeback:
 
 ```yaml
 writeback:
-  comment_template: "【自动评分】{score}/{max} 分\n{comment}"
+  comment_template: "【自动评分】{score}/{max} 分"
 ```
 
-可用占位符：
+默认只发送最终汇总分数，不包含详细评分输出。需要自定义评语时，可用占位符：
 
 | 占位符 | 内容 |
 |---|---|

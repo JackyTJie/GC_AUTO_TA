@@ -19,8 +19,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from canvasapi.assignment import Assignment
 from canvasapi.requester import Requester
 from gc_auto_ta.canvas_api import CanvasGateway
+from gc_auto_ta.config import Config, DEFAULTS
 from gc_auto_ta.util import RateLimiter
 from gc_auto_ta.util import setup_logging, trace_http_response
+from gc_auto_ta.writeback import build_comment
+
+
+class WritebackCommentTests(unittest.TestCase):
+    def test_default_and_fallback_comments_only_include_score(self):
+        for writeback in [DEFAULTS["writeback"], {}, {"comment_template": ""}]:
+            cfg = Config(path=Path("config.yaml"), project_root=Path.cwd(), raw={
+                "grading": {"max_score": 60}, "writeback": writeback,
+            })
+            for score in [60.0, 32.5, 0.0]:
+                with self.subTest(writeback=writeback, score=score):
+                    row = {
+                        "raw_score": score,
+                        "comment": "Detailed compiler output\n" * 1000,
+                        "stages": [{"name": "run", "score": score}],
+                    }
+                    self.assertEqual(build_comment(cfg, row, {"numeric": score}),
+                                     f"【自动评分】{score}/60.0 分")
+
+    def test_custom_comment_template_is_preserved(self):
+        cfg = Config(path=Path("config.yaml"), project_root=Path.cwd(), raw={
+            "writeback": {"comment_template": "{score}/{max}: {comment}"},
+        })
+        self.assertEqual(build_comment(cfg, {"raw_score": 50, "comment": "Details"}, {}),
+                         "50/100.0: Details")
 
 
 class BulkWritebackTests(unittest.TestCase):

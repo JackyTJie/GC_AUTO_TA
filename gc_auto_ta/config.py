@@ -79,7 +79,7 @@ DEFAULTS: dict[str, Any] = {
         "mode": "dry",                # off | dry | live
         "grade_mode": "points",       # points（换算到作业满分）| percent | raw
         "missing_score": 0,
-        "comment_template": "【自动评分】{score}/{max} 分\n{comment}",
+        "comment_template": "【自动评分】{score}/{max} 分",
         "comment_max_len": 4000,
         "late_penalty_per_day": 0,
         "due_at": None,
@@ -467,7 +467,7 @@ class Config:
 
     @property
     def comment_template(self) -> str:
-        return str(self.get("writeback.comment_template") or "{score}/{max}\n{comment}")
+        return str(self.get("writeback.comment_template") or DEFAULTS["writeback"]["comment_template"])
 
     @property
     def comment_max_len(self) -> int:

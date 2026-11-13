@@ -163,7 +163,7 @@ writeback:
   mode: dry                  # off | dry（只打印）| live（真写）
   grade_mode: points         # points（换算到作业满分）| percent（"87.5%"）| raw（原样）
   missing_score: 0           # on_missing_submission=zero 时用的分数
-  comment_template: "【自动评分】{score}/{max} 分\n{comment}"
+  comment_template: "【自动评分】{score}/{max} 分"
   # 可用占位符：{score} {max} {points} {comment} {stages} {student} {assignment}
   comment_max_len: 4000      # Canvas 评论长度上限，超出截断
   late_penalty_per_day: 0    # 每天扣的比例（0.1 = 每天 10%），需要 due_at
