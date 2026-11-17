@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import re
 import shutil
@@ -23,7 +24,8 @@ logging.addLevelName(TRACE_LEVEL, "TRACE")
 # --------------------------------------------------------------------------- 日志
 def setup_logging(verbose: bool = False, level: str | None = None,
                   file: str | Path | None = None,
-                  secrets: Iterable[str] = (), max_response_bytes: int = 20000) -> None:
+                  secrets: Iterable[str] = (), max_response_bytes: int = 20000,
+                  max_bytes: int = 10 * 1024 * 1024, backup_count: int = 5) -> None:
     """初始化日志；指定 file 时将所有应用日志输出到该文件。"""
     logger = logging.getLogger(LOG_NAME)
     for old_handler in logger.handlers:
@@ -32,7 +34,8 @@ def setup_logging(verbose: bool = False, level: str | None = None,
     if file:
         path = Path(file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(path, encoding="utf-8")
+        handler = RotatingFileHandler(path, maxBytes=max_bytes,
+                                      backupCount=backup_count, encoding="utf-8")
     else:
         handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s",

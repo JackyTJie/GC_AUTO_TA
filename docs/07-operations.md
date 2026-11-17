@@ -18,6 +18,10 @@
 `Set-Cookie` 不写入。`logging.trace_max_response_bytes` 限制每条响应正文的字节数，
 默认 20000。排查完成后将级别改回 `info`，并妥善保管 trace 文件；正文可能含学生信息。
 
+文件日志默认在 10 MiB 时轮转，保留 5 个备份（文件名依次追加 .1 到 .5）。
+可通过 logging.max_bytes（字节）和 logging.backup_count 调整；将 max_bytes 设为 0 可关闭轮转。
+轮转在下一条日志写入时触发，单条日志超过限制时该文件可能暂时大于限制。
+
 ### 各子命令
 
 ```bash

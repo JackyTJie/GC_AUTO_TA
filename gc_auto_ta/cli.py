@@ -46,7 +46,8 @@ def _load_cfg(args) -> Config:
     setup_logging(level=("debug" if getattr(args, "verbose", False)
                          and cfg.log_level != "trace" else cfg.log_level),
                   file=cfg.log_file, secrets=cfg.secrets,
-                  max_response_bytes=cfg.trace_max_response_bytes)
+                  max_response_bytes=cfg.trace_max_response_bytes,
+                  max_bytes=cfg.log_max_bytes, backup_count=cfg.log_backup_count)
     return cfg
 
 

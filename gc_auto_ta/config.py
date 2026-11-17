@@ -90,6 +90,8 @@ DEFAULTS: dict[str, Any] = {
     "logging": {
         "level": "info",
         "file": None,
+        "max_bytes": 10 * 1024 * 1024,
+        "backup_count": 5,
         "trace_max_response_bytes": 20000,
     },
     "paths": {
@@ -493,6 +495,14 @@ class Config:
     def log_file(self) -> Path | None:
         value = self.get("logging.file")
         return self._path("logging.file", "") if value else None
+
+    @property
+    def log_max_bytes(self) -> int:
+        return max(0, int(self.get("logging.max_bytes", 10 * 1024 * 1024)))
+
+    @property
+    def log_backup_count(self) -> int:
+        return max(1, int(self.get("logging.backup_count", 5)))
 
     @property
     def trace_max_response_bytes(self) -> int:
