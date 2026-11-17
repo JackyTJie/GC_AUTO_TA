@@ -61,6 +61,16 @@ def _remove_existing_workspace(dest: Path) -> None:
 
     log().debug("发现旧工作区，开始清理：%s", dest)
 
+    if os.name == "nt":
+        # Git stores loose objects as read-only files. Windows refuses to unlink
+        # them until the attribute is cleared, so do this before rmtree.
+        for root, dirs, files in os.walk(dest):
+            for name in dirs + files:
+                path = Path(root) / name
+                mode = path.lstat().st_mode
+                if not stat.S_ISLNK(mode) and not mode & stat.S_IWRITE:
+                    os.chmod(path, mode | stat.S_IWRITE)
+
     def onerror(func, path, exc_info):
         exc = exc_info[1]
         log().debug("清理工作区删除失败：func=%s path=%s error=%r；尝试清除只读属性",
@@ -148,7 +158,7 @@ def build_config_repo_workspace(cfg, dest: Path) -> Path:
     """layout=config_repo：把评分文件单独组装成一个 TA 私有仓库工作区。"""
     dest = Path(dest)
     if dest.exists():
-        shutil.rmtree(dest)
+        _remove_existing_workspace(dest)
     dest.mkdir(parents=True)
     files = cfg.grading_files()
     for rel, content in files.items():

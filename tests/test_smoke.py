@@ -311,7 +311,10 @@ def test_grading_parse() -> None:
 
 def test_provision_cleans_readonly_workspace(tmp: Path) -> None:
     print("[provision] 清理旧工作区中的只读文件")
-    from gc_auto_ta.provision import _remove_existing_workspace
+    from unittest.mock import patch
+
+    from gc_auto_ta.provision import (_remove_existing_workspace,
+                                      build_config_repo_workspace)
 
     workspace = tmp / "workspaces" / "hw1-2026000001"
     locked = workspace / ".git" / "objects" / "09" / "deadbeef"
@@ -319,9 +322,28 @@ def test_provision_cleans_readonly_workspace(tmp: Path) -> None:
     locked.write_text("old object", encoding="utf-8")
     locked.chmod(0o444)
 
-    _remove_existing_workspace(workspace)
+    with patch("gc_auto_ta.provision.log") as logger:
+        _remove_existing_workspace(workspace)
 
     check("旧工作区清理成功", not workspace.exists())
+    check("只读 Git 对象首次删除成功",
+          not any("清理工作区删除失败" in str(call.args[0])
+                  for call in logger.return_value.debug.call_args_list))
+
+    config_repo = tmp / "workspaces" / "_config_repo"
+    config_object = config_repo / ".git" / "objects" / "09" / "deadbeef"
+    config_object.parent.mkdir(parents=True)
+    config_object.write_text("old object", encoding="utf-8")
+    config_object.chmod(0o444)
+    cfg = SimpleNamespace(assignment_name="hw1",
+                          grading_files=lambda: {"joj/conf.json": "{}"})
+    with patch("gc_auto_ta.provision.log") as logger:
+        build_config_repo_workspace(cfg, config_repo)
+    check("配置仓库中的只读 Git 对象首次删除成功",
+          not config_object.exists()
+          and (config_repo / "joj" / "conf.json").exists()
+          and not any("清理工作区删除失败" in str(call.args[0])
+                      for call in logger.return_value.debug.call_args_list))
 
 
 def test_grade_skips_provision_failures(tmp: Path) -> None:
