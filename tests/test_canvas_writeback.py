@@ -48,6 +48,61 @@ class WritebackCommentTests(unittest.TestCase):
         self.assertEqual(build_comment(cfg, {"raw_score": 50, "comment": "Details"}, {}),
                          "50/100.0: Details")
 
+    def test_writeback_uses_download_stage_canvas_ids(self):
+        import json
+        import tempfile
+        from gc_auto_ta.state import State
+        import gc_auto_ta.writeback as writeback_module
+
+        class FakeCanvas:
+            submitted = []
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def assignment_props(self):
+                return {"points_possible": 100, "due_at": None,
+                        "anonymous_grading": False}
+
+            def post_grade(self, uid, grade, comment="", dry_run=True, anonymous_id=None):
+                self.submitted.append(uid)
+                return {"user_id": uid, "posted_grade": str(grade)}
+
+            def gradeable_anonymous_ids(self):
+                return {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = Config(path=root / "config.yaml", project_root=root, raw={
+                "canvas": {"base_url": "https://canvas.test", "token": "token",
+                            "course_id": 1, "assignment_id": 2},
+                "assignment": {"name": "hw1"},
+                "grading": {"max_score": 100},
+                "writeback": {"mode": "live", "bulk": False},
+                "paths": {"work_dir": str(root / "work"),
+                          "state_db": str(root / "state.sqlite3")},
+            })
+            work = cfg.assignment_work_dir
+            work.mkdir(parents=True)
+            (work / "manifest.json").write_text(
+                json.dumps({"downloaded_canvas_user_ids": [11]}), encoding="utf-8")
+            old_gateway = writeback_module.CanvasGateway
+            writeback_module.CanvasGateway = FakeCanvas
+            try:
+                with State(cfg.state_db) as state:
+                    rows = [
+                        {"student_key": "fresh", "canvas_user_id": 11,
+                         "raw_score": 80, "comment": "", "stages": []},
+                        {"student_key": "stale", "canvas_user_id": 22,
+                         "raw_score": 90, "comment": "", "stages": []},
+                    ]
+                    result = writeback_module.run(cfg, state, rows=rows, live=True)
+                self.assertEqual(FakeCanvas.submitted, [11])
+                self.assertEqual(result["stale"]["skipped"],
+                                 "not in download-stage Canvas user ID list")
+            finally:
+                writeback_module.CanvasGateway = old_gateway
+
 
 class BulkWritebackTests(unittest.TestCase):
     def setUp(self):

@@ -116,6 +116,12 @@ def pull(cfg, limit: int | None = None, only: list[str] | None = None) -> dict:
         subs = [s for s in subs if student_from_submission(s, users.get(int(getattr(s, "user_id", 0) or 0))).student_key in only]
     if limit:
         subs = subs[:limit]
+    # Keep the exact Canvas user IDs seen in this download run.  Writeback uses
+    # this snapshot to avoid posting grades for stale students left in state.
+    manifest["downloaded_canvas_user_ids"] = sorted({
+        int(getattr(s, "user_id", 0) or 0) for s in subs
+        if int(getattr(s, "user_id", 0) or 0)
+    })
 
     for sub in subs:
         uid = int(getattr(sub, "user_id", 0) or 0)

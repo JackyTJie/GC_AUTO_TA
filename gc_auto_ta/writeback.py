@@ -23,7 +23,7 @@ import math
 from datetime import datetime, timezone
 
 from .canvas_api import CanvasGateway
-from .util import log
+from .util import log, read_json
 
 
 # --------------------------------------------------------------------------- 换算
@@ -120,9 +120,29 @@ def run(cfg, state, rows: list[dict] | None = None, live: bool | None = None,
 
     rows = rows or build_rows(cfg, state)
     targets = [r for r in rows if (not only or r["student_key"] in only)]
+    manifest_path = cfg.assignment_work_dir / "manifest.json"
+    manifest = read_json(manifest_path, default={}) or {}
+    downloaded_ids = manifest.get("downloaded_canvas_user_ids")
+    if downloaded_ids is None:
+        submission_dir = cfg.assignment_work_dir / "submissions"
+        if submission_dir.exists():
+            downloaded_ids = [read_json(path).get("user_id")
+                              for path in submission_dir.glob("*/_canvas.json")]
+    results: dict[str, dict] = {}
+    if downloaded_ids is not None:
+        allowed_ids = {int(uid) for uid in downloaded_ids if str(uid).strip()}
+        targets = [row for row in targets if row.get("canvas_user_id") is not None
+                   and int(row["canvas_user_id"]) in allowed_ids]
+        eligible_keys = {row["student_key"] for row in targets}
+        for row in rows:
+            key = row["student_key"]
+            if (not only or key in only) and key not in eligible_keys:
+                results[key] = {"skipped": "not in download-stage Canvas user ID list"}
+        if results:
+            log().info("按下载阶段学生 ID 列表跳过 %d 条旧记录", len(results))
     if not targets:
         log().warning("没有可回写的记录（先跑 grade 收集分数）")
-        return {}
+        return results
 
     try:
         gw = CanvasGateway(cfg.canvas_base_url, cfg.canvas_token,
@@ -135,7 +155,6 @@ def run(cfg, state, rows: list[dict] | None = None, live: bool | None = None,
         anon_ids: dict[int, str] = gw.gradeable_anonymous_ids() if anonymous else {}
     except Exception as exc:
         detail = f"Canvas 回写初始化失败：{exc}"
-        results = {}
         for row in targets:
             key = row["student_key"]
             results[key] = {"error": detail}
@@ -145,7 +164,6 @@ def run(cfg, state, rows: list[dict] | None = None, live: bool | None = None,
     bulk = cfg.writeback_bulk if bulk is None else bulk
     dry = mode != "live"
     payload: dict[int, dict] = {}
-    results: dict[str, dict] = {}
 
     for row in targets:
         key = row["student_key"]
